@@ -1,0 +1,66 @@
+{
+  "name": "softube-mixingstation-bridge",
+  "version": "1.0.0",
+  "description": "Bridge between Softube Console 1 and Mixing Station API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "fake:meters": "node tools/fake-metering-proxy.js --verbose",
+    "fake:meters:proxy": "node tools/fake-metering-proxy.js --listen 8081 --upstream ws://127.0.0.1:8080",
+    "fake:x32": "node tools/fake-metering-proxy.js --x32 --listen 10023",
+    "gui": "electron app/main.js",
+    "gui:verbose": "electron app/main.js --verbose",
+    "repl": "node tools/ws-repl.js",
+    "build:mac": "electron-builder --mac",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "keywords": [
+    "softube",
+    "console1",
+    "mixingstation",
+    "bridge",
+    "midi",
+    "ws",
+    "websocket"
+  ],
+  "author": "Strejda603",
+  "license": "GPL-3.0-only",
+  "dependencies": {
+    "midi": "^2.0.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "electron": "^39.2.7",
+    "electron-builder": "^26.4.0"
+  },
+  "build": {
+    "appId": "com.strejda603.console1msbridge",
+    "productName": "Softube Console 1 MS Bridge",
+    "compression": "maximum",
+    "electronLanguages": [
+      "en",
+      "cs"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "app/**/*",
+      "index.js",
+      "package.json",
+      "README.md"
+    ],
+    "extraMetadata": {
+      "main": "app/main.js"
+    },
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": "-"
+    }
+  }
+}

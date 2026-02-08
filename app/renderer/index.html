@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Softube-MS-Bridge</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-icon" src="assets/icon.png" alt="" />
+          <div>
+            <div class="brand-title">Softube-MS-Bridge</div>
+            <div class="brand-sub">Console 1 ↔ Mixing Station</div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <div class="badge" id="mode">Mode: —</div>
+          <div class="status" id="status">Stopped</div>
+          <button
+            class="btn primary hidden"
+            id="btnApply"
+            title="Apply settings and update mappings without restarting"
+          >
+            Apply Changes
+          </button>
+          <button class="btn primary" id="btnStart">Start</button>
+          <button class="btn" id="btnStop" disabled>Stop</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <aside class="sidebar">
+          <div class="panel">
+            <div class="panel-title">Presets</div>
+            <div class="row">
+              <select id="presetSelect" class="select"></select>
+              <button class="btn" id="btnReloadPresets" title="Refresh presets">↻</button>
+            </div>
+
+            <div class="row">
+              <input id="presetName" class="input" placeholder="Preset name" />
+            </div>
+
+            <div class="row grid-2">
+              <button class="btn" id="btnSavePreset">Save</button>
+              <button class="btn" id="btnLoadPreset">Load</button>
+            </div>
+
+            <div class="row grid-2">
+              <button class="btn danger" id="btnDeletePreset">Delete</button>
+              <button class="btn" id="btnExportPreset">Export</button>
+            </div>
+
+            <div class="row">
+              <button class="btn" id="btnImportPreset">Import…</button>
+            </div>
+
+            <div class="row">
+              <button class="btn" id="btnOpenPresetsFolder">Open presets folder</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title">Quick Tips</div>
+            <div class="muted small">
+              Drag to reorder (or use <b>↑/↓</b>). Use <b>Link</b> to group adjacent channels as
+              stereo, and <b>Unlink</b> to split.
+            </div>
+          </div>
+        </aside>
+
+        <main class="main">
+          <section class="panel">
+            <div class="panel-title">Connection</div>
+            <div class="form">
+              <label class="label">Mixing Station WebSocket URL</label>
+              <input id="wsUrl" class="input" placeholder="ws://localhost:8080" />
+
+              <label class="checkbox">
+                <input type="checkbox" id="logJson" />
+                <span>Enable JSON debug logging</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">Track Custom Layout</div>
+            <div class="form">
+              <div class="row">
+                <button class="btn" id="btnDetectFromMixer">Read from mixer</button>
+                <div class="muted small" id="detectStatus"></div>
+              </div>
+
+              <div class="tabs" role="tablist" aria-label="Track layout tabs">
+                <button
+                  class="tab-btn active"
+                  id="layoutTabInputs"
+                  role="tab"
+                  aria-selected="true"
+                  aria-controls="layoutPanelInputs"
+                  tabindex="0"
+                >
+                  Inputs <span class="tab-badge" id="layoutTabInputsBadge"></span>
+                </button>
+                <button
+                  class="tab-btn"
+                  id="layoutTabBuses"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="layoutPanelBuses"
+                  tabindex="-1"
+                >
+                  Buses <span class="tab-badge" id="layoutTabBusesBadge"></span>
+                </button>
+              </div>
+
+              <div class="tab-panels">
+                <div
+                  id="layoutPanelInputs"
+                  class="tab-panel"
+                  role="tabpanel"
+                  aria-labelledby="layoutTabInputs"
+                >
+                  <div class="layout-controls">
+                    <div class="row">
+                      <label class="label" for="inputCount">Input count</label>
+                      <input id="inputCount" class="input narrow" type="number" min="0" step="1" />
+                      <button class="btn" id="btnInputGenerate" title="Generate sequential order">
+                        Generate
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="split layout-split">
+                    <div>
+                      <div class="subhead">Custom ordering</div>
+                      <div class="muted small">For deactivation drag on the right.</div>
+                      <div id="inputEditor" class="list" aria-label="Input track order"></div>
+                    </div>
+
+                    <div>
+                      <div class="subhead">Unorganized</div>
+                      <div class="muted small">Drag into the custom layout on the left.</div>
+                      <div
+                        id="inputRest"
+                        class="list list-rest"
+                        aria-label="Unorganized input tracks"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  id="layoutPanelBuses"
+                  class="tab-panel hidden"
+                  role="tabpanel"
+                  aria-labelledby="layoutTabBuses"
+                >
+                  <div class="layout-controls">
+                    <div class="row">
+                      <label class="label" for="busCount">Bus count</label>
+                      <input id="busCount" class="input narrow" type="number" min="0" step="1" />
+                      <button class="btn" id="btnBusGenerate" title="Generate sequential order">
+                        Generate
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="split layout-split">
+                    <div>
+                      <div class="subhead">Custom ordering</div>
+                      <div class="muted small">For deactivation drag on the right.</div>
+                      <div id="busEditor" class="list" aria-label="Bus track order"></div>
+                    </div>
+
+                    <div>
+                      <div class="subhead">Unorganized</div>
+                      <div class="muted small">Drag into the custom layout on the left.</div>
+                      <div
+                        id="busRest"
+                        class="list list-rest"
+                        aria-label="Unorganized bus tracks"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">Sends Mapping</div>
+            <div class="form">
+              <div class="subhead">Sends 1-6 map to Buses</div>
+              <div class="send-grid" aria-label="Console 1 Sends mapping">
+                <div class="send-item">
+                  <label class="label" for="sendMap1">Send 1</label>
+                  <select id="sendMap1" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap2">Send 2</label>
+                  <select id="sendMap2" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap3">Send 3</label>
+                  <select id="sendMap3" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap4">Send 4</label>
+                  <select id="sendMap4" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap5">Send 5</label>
+                  <select id="sendMap5" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap6">Send 6</label>
+                  <select id="sendMap6" class="select"></select>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">Console 1 Fixed Colors</div>
+            <div class="form grid-cols">
+              <div>
+                <label class="label">Main</label>
+                <div class="row">
+                  <input type="color" id="mainColorPicker" class="color" />
+                  <input id="mainColorInt" class="input" placeholder="0x00A5FF" />
+                </div>
+              </div>
+              <div>
+                <label class="label">Bus</label>
+                <div class="row">
+                  <input type="color" id="busColorPicker" class="color" />
+                  <input id="busColorInt" class="input" placeholder="0x800080" />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">Console Output</div>
+            <div class="row">
+              <button class="btn" id="btnClearLog">Clear</button>
+              <label class="checkbox">
+                <input type="checkbox" id="autoScroll" checked />
+                <span>Auto-scroll</span>
+              </label>
+            </div>
+            <div class="log" id="log"></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
