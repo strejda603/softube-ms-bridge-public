@@ -10,7 +10,7 @@ It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and 
 - Mixing Station with WebSocket API enabled/reachable (default is `ws://localhost:8080`)
 - Softube Console 1 Fader Mk III MIDI ports available on your system
 
-## Quick start
+## Quick start (CLI)
 
 1. Install dependencies:
 
@@ -27,22 +27,31 @@ It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and 
 
 ## GUI launcher
 
-This repo also includes an Electron-based launcher UI (settings + presets + live logs).
+This repo includes an Electron-based GUI launcher (settings + presets + live logs).
 
-- Run in development:
+- Run the GUI:
 
   `npm run gui`
 
-### Verbose GUI mode (terminal logs, quiet GUI console)
+### Verbose GUI mode
 
-If you want the bridge to emit verbose debug logs (equivalent to `LOG_JSON=true`) **to the Terminal**
-but keep the GUI "Console Output" panel clean, launch the GUI with `--verbose`:
+If you want verbose debug logs in the Terminal (and a quieter GUI log panel), run:
 
 - `npm run gui -- --verbose`
 
-Or using the convenience script:
+Or use the convenience script:
 
 - `npm run gui:verbose`
+
+## What it supports
+
+- Track layout with custom ordering (inputs + buses + main), banked 10-wide for Console 1
+- Track state mirroring: name/color, fader, mute, solo, pan, selection
+- Sends mode: selecting a Bus master temporarily maps mute/pan to the chosen bus send
+- Metering: Console 1 active meter requests → Mixing Station `metering2`
+- Stability features: reconnect + init buffering + batching to avoid WS/SysEx spam
+
+Note: Bus master solo is intentionally ignored (both directions), to avoid surprising “solo the whole bus” behavior.
 
 ## macOS app (.app) build
 
@@ -57,13 +66,6 @@ Build a standalone macOS app bundle (plus `.dmg` and `.zip` artifacts):
   `npm run build:mac`
 
 Artifacts are written to `dist/`.
-
-## What it does
-
-- Subscribes to required Mixing Station channel data and keeps a local cache.
-- On connect/reconnect it buffers initial updates, then sends one full Console 1 `trackBatch` dump.
-- After initialization, it sends incremental updates to Console 1 in small batches (to avoid SysEx spam).
-- Coalesces fast Console 1 writes (faders/pan) before sending them to Mixing Station (to avoid WS spam).
 
 ## Track layout (banks + ordering)
 
@@ -93,7 +95,7 @@ Also note the channel ranges the bridge assumes:
 
 Console 1 exposes 6 send slots, while Mixing Station can have up to 16 bus sends.
 
-### Send slot mapping (Send1..Send6 → which bus?)
+### Send slot mapping
 
 Edit `C1_SEND_TO_MS_BUS_NUMBER` in [index.js](index.js):
 
@@ -105,7 +107,7 @@ This mapping controls how Console 1 `send1..send6` and `send1On..send6On` are wr
 - `ch.<input>.mix.sends.<msSendIndex>.lvl`
 - `ch.<input>.mix.sends.<msSendIndex>.on`
 
-### “Sends mode” (mute/pan reflect a selected bus send)
+### Sends mode (selection-driven)
 
 The bridge also implements a special “sends mode”, latched by selection:
 
@@ -136,15 +138,6 @@ On `SIGINT`/`SIGTERM` (Ctrl+C):
 - Deactivates all tracks on Console 1
 - Closes MIDI ports and the WebSocket
 
-## Configuration of faders
-
-Edit these in [index.js](index.js):
-
-- `MIXING_STATION_WS_URL` (default `ws://localhost:8080`)
-- `LOG_JSON` (set `true` to log JSON traffic)
-- Layout ordering: `INPUT_TRACK_ORDER`, `BUS_TRACK_ORDER`
-- Send mapping: `C1_SEND_TO_MS_BUS_NUMBER`
-
 ## Troubleshooting
 
 - “MIDI port not found”:
@@ -160,3 +153,4 @@ Edit these in [index.js](index.js):
 
 - Need more visibility:
   - Set `LOG_JSON = true` in [index.js](index.js) to log WS/MIDI JSON payloads.
+  - Set `LOG_METERING = true` in [index.js](index.js) to log metering parsing + subscription details.
