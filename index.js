@@ -16,9 +16,9 @@
 
 let midi;
 try {
-  midi = require("midi");
+  midi = require("@julusian/midi");
 } catch (err) {
-  console.error("Failed to load 'midi' module:", err);
+  console.error("Failed to load '@julusian/midi' module:", err);
   process.exit(1);
 }
 const WebSocket = require("ws");
