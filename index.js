@@ -75,18 +75,135 @@ function getOrCreateTrackIdForObjectId(objectId) {
 
 // --- Global state ---
 // --- Track layout config ---
-// Mixing Station typically exposes 80 channels (see `/console/information`).
-const MS_TOTAL_CHANNELS = 80;
+// Mixing Station channel architecture can be discovered via `/console/information`.
+// Defaults match Behringer X32-style layouts and are used as fallbacks.
+let MS_TOTAL_CHANNELS = 80;
 
 // Console 1 Fader Mk III: 10 faders. We build 10-wide banks of tracks.
 // Current layout places Main only once (10th fader on the last bus bank).
 const FADER_BANK_SIZE = 10;
 const INPUTS_PER_BANK = 10; // Input banks use all faders; Main is placed only once (see `rebuildTrackLayout`).
 
-const INPUT_CHANNEL_COUNT = 32; // Input channels 0..31
-const BUS_CHANNEL_START = 48; // Bus channels 48..63
-const BUS_CHANNEL_COUNT = 16;
-const MAIN_STEREO_CHANNELS = [70, 71]; // Main L/R
+let INPUT_CHANNEL_COUNT = 32; // Input channels 0..31
+let BUS_CHANNEL_START = 48; // Bus channels 48..63
+let BUS_CHANNEL_COUNT = 16;
+let MAIN_STEREO_CHANNELS = [70, 71]; // Main L/R
+
+/**
+ * Runtime console architecture info (from `/console/information`).
+ * We only apply it when explicitly requested during a WS connect, to avoid
+ * changing channel mapping mid-session.
+ */
+let consoleInfoRequestState = { pending: false, accepted: false, resolve: null };
+
+/**
+ * Apply Mixing Station `/console/information` response to our channel constants.
+ * Uses best-effort heuristics and keeps existing defaults as fallback.
+ *
+ * @param {{totalChannels?:number, channelTypes?:Array<any>}} info
+ */
+function applyConsoleInformation(info) {
+  if (!info || typeof info !== "object") return;
+
+  const total = Number(info.totalChannels);
+  if (Number.isFinite(total) && total > 0) MS_TOTAL_CHANNELS = total;
+
+  const types = Array.isArray(info.channelTypes) ? info.channelTypes : [];
+  const findType = (re) =>
+    types.find(
+      (t) =>
+        t &&
+        (re.test(String(t.name || "")) || re.test(String(t.shortName || ""))) &&
+        Number.isFinite(Number(t.offset)) &&
+        Number.isFinite(Number(t.count)) &&
+        Number(t.count) > 0,
+    );
+
+  // Inputs: prefer the type named like "Input" with offset 0 if available.
+  const inputCandidates = types
+    .filter(
+      (t) =>
+        t &&
+        (/\binput\b|\bch\b/i.test(String(t.name || "")) ||
+          /\binput\b|\bch\b/i.test(String(t.shortName || ""))) &&
+        Number.isFinite(Number(t.offset)) &&
+        Number.isFinite(Number(t.count)) &&
+        Number(t.count) > 0,
+    )
+    .sort((a, b) => Number(a.offset) - Number(b.offset));
+  const inputType = inputCandidates.find((t) => Number(t.offset) === 0) || inputCandidates[0];
+  if (inputType) {
+    const inputOffset = Number(inputType.offset);
+    const inputCount = Number(inputType.count);
+    // Bridge currently assumes inputs are indexed from 0.
+    if (inputOffset === 0 && Number.isFinite(inputCount) && inputCount > 0) {
+      INPUT_CHANNEL_COUNT = inputCount;
+    }
+  }
+
+  // Buses.
+  const busType = findType(/\bbus\b/i);
+  if (busType) {
+    const off = Number(busType.offset);
+    const cnt = Number(busType.count);
+    if (Number.isFinite(off) && off >= 0) BUS_CHANNEL_START = off;
+    if (Number.isFinite(cnt) && cnt > 0) BUS_CHANNEL_COUNT = cnt;
+  }
+
+  // Main.
+  const mainType = findType(/\bmain\b/i);
+  if (mainType) {
+    const off = Number(mainType.offset);
+    const cnt = Number(mainType.count);
+    if (Number.isFinite(off) && off >= 0 && Number.isFinite(cnt) && cnt > 0) {
+      MAIN_STEREO_CHANNELS = cnt >= 2 ? [off, off + 1] : [off];
+    }
+  }
+
+  if (LOG_JSON) {
+    console.log(
+      `[ConsoleInfo] total=${MS_TOTAL_CHANNELS} inputs=0..${INPUT_CHANNEL_COUNT - 1} bus=${BUS_CHANNEL_START}..${BUS_CHANNEL_START + BUS_CHANNEL_COUNT - 1} main=${MAIN_STEREO_CHANNELS.join(",")}`,
+    );
+  }
+}
+
+/**
+ * Fetch `/console/information` once and apply it before building subscriptions.
+ * Resolves even on timeout/failure (keeps fallbacks).
+ *
+ * @param {number} timeoutMs
+ */
+function fetchAndApplyConsoleInformation(timeoutMs = 500) {
+  if (!msWebSocket || msWebSocket.readyState !== WebSocket.OPEN) {
+    return Promise.resolve(false);
+  }
+  if (consoleInfoRequestState.pending) return Promise.resolve(false);
+
+  consoleInfoRequestState.pending = true;
+  consoleInfoRequestState.accepted = false;
+
+  return new Promise((resolve) => {
+    consoleInfoRequestState.resolve = (ok) => {
+      if (!consoleInfoRequestState.pending) return;
+      consoleInfoRequestState.pending = false;
+      consoleInfoRequestState.accepted = !!ok;
+      consoleInfoRequestState.resolve = null;
+      resolve(!!ok);
+    };
+
+    sendToMixingStationWS({ path: "/console/information", method: "GET" });
+
+    setTimeout(() => {
+      if (
+        consoleInfoRequestState.pending &&
+        typeof consoleInfoRequestState.resolve === "function"
+      ) {
+        // Timeout: proceed with fallbacks and ignore any late reply.
+        consoleInfoRequestState.resolve(false);
+      }
+    }, timeoutMs);
+  });
+}
 
 // Console 1-only colors for non-input "virtual" tracks.
 // These are intentionally NOT part of Mixing Station's 16-color palette (`baseColors`/styleClass).
@@ -2024,8 +2141,16 @@ function connectMixingStationWebSocket() {
   }
   msWebSocket = new WebSocket(MIXING_STATION_WS_URL);
 
-  msWebSocket.on("open", () => {
+  msWebSocket.on("open", async () => {
     console.log("Connected to Mixing Station WebSocket");
+
+    // Best-effort: discover mixer channel architecture before building the layout/subscriptions.
+    // If this times out or fails, we proceed with the built-in defaults.
+    try {
+      await fetchAndApplyConsoleInformation(600);
+    } catch {
+      // ignore
+    }
 
     // Reset init state on each connect/reconnect.
     rebuildTrackLayout();
@@ -2630,6 +2755,17 @@ function handleWSMessage(data) {
   try {
     const msg = JSON.parse(coerceWsPayloadToText(data));
     if (!msg || typeof msg.path !== "string") return;
+
+    // Console architecture info.
+    if (msg.path === "/console/information") {
+      if (consoleInfoRequestState.pending && !consoleInfoRequestState.accepted) {
+        applyConsoleInformation(msg.body);
+        if (typeof consoleInfoRequestState.resolve === "function") {
+          consoleInfoRequestState.resolve(true);
+        }
+      }
+      return;
+    }
 
     // Metering updates arrive as: /console/metering2/{id}
     if (msg.path.startsWith("/console/metering2/")) {
