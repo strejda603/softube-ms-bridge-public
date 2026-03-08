@@ -80,6 +80,27 @@
               <label class="label">Mixing Station WebSocket URL</label>
               <input id="wsUrl" class="input" placeholder="ws://localhost:8080" />
 
+              <label class="label" for="metering2IntervalMs">Metering interval (ms)</label>
+              <div class="row">
+                <input
+                  id="metering2IntervalMs"
+                  type="range"
+                  min="30"
+                  max="1000"
+                  step="1"
+                  class="range"
+                />
+                <input
+                  id="metering2IntervalMsValue"
+                  class="input narrow range-value"
+                  type="number"
+                  min="30"
+                  max="1000"
+                  step="1"
+                  value="100"
+                />
+              </div>
+
               <label class="checkbox">
                 <input type="checkbox" id="logJson" />
                 <span>Enable JSON debug logging</span>

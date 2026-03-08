@@ -31,6 +31,7 @@ const HIDE_BRIDGE_LOG_IN_GUI = (() => {
  * @property {(number|number[])[]} inputTrackOrder
  * @property {(number|number[])[]} busTrackOrder
  * @property {number[]} c1SendToMsBusNumber
+ * @property {number|undefined} [metering2IntervalMs]
  * @property {number|undefined} [console1MainColor]
  * @property {number|undefined} [console1BusColor]
  */
@@ -94,6 +95,7 @@ function makeDefaultConfig({ inputCount = 32, busCount = 16 } = {}) {
   return {
     mixingStationWsUrl: "ws://localhost:8080",
     logJson: false,
+    metering2IntervalMs: 100,
     // Total counts (independent of custom order length).
     inputCount: inCount,
     busCount: bCount,
@@ -252,6 +254,29 @@ function clampInt(n, min, max) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
+function clampIntWithFallback(n, min, max, fallback) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
+}
+
+function setMeteringIntervalUi(ms) {
+  const slider = document.getElementById("metering2IntervalMs");
+  const valueInput = document.getElementById("metering2IntervalMsValue");
+  if (!slider || !valueInput) return;
+
+  const clamped = clampIntWithFallback(ms, 30, 1000, 100);
+  slider.value = String(clamped);
+  valueInput.value = String(clamped);
+}
+
+function getMeteringIntervalFromUi() {
+  const valueInput = document.getElementById("metering2IntervalMsValue");
+  const slider = document.getElementById("metering2IntervalMs");
+  const raw = valueInput?.value ?? slider?.value;
+  return clampIntWithFallback(raw, 30, 1000, 100);
+}
+
 function flattenRowsToMax(rows) {
   let maxVal = 0;
   for (const r of rows) {
@@ -381,6 +406,7 @@ function canonicalizeConfigForCompare(cfg) {
   const obj = {
     mixingStationWsUrl: String(cfg?.mixingStationWsUrl || "ws://localhost:8080"),
     logJson: !!cfg?.logJson,
+    metering2IntervalMs: clampIntWithFallback(cfg?.metering2IntervalMs, 30, 1000, 100),
     inputCount: clampInt(Number(cfg?.inputCount ?? state.inputTotalCount), 1, 512),
     busCount: clampInt(Number(cfg?.busCount ?? state.busTotalCount), 1, 512),
     inputTrackOrder: Array.isArray(cfg?.inputTrackOrder) ? cfg.inputTrackOrder : [],
@@ -913,6 +939,7 @@ function syncCountsToState() {
 function getConfigFromForm() {
   const wsUrl = document.getElementById("wsUrl").value.trim();
   const logJson = document.getElementById("logJson").checked;
+  const metering2IntervalMs = getMeteringIntervalFromUi();
 
   const inputTrackOrder = rowsToConfigInputOrder(state.inputRows);
   const busTrackOrder = rowsToConfigBusOrder(state.busRows);
@@ -930,6 +957,7 @@ function getConfigFromForm() {
   return {
     mixingStationWsUrl: wsUrl || "ws://localhost:8080",
     logJson,
+    metering2IntervalMs,
     // Total counts.
     inputCount: state.inputTotalCount,
     busCount: state.busTotalCount,
@@ -954,6 +982,8 @@ function getConfigFromForm() {
 function setFormFromConfig(cfg) {
   document.getElementById("wsUrl").value = cfg?.mixingStationWsUrl || "ws://localhost:8080";
   document.getElementById("logJson").checked = !!cfg?.logJson;
+
+  setMeteringIntervalUi(cfg?.metering2IntervalMs);
 
   // Build editor rows from config (or neutral sequential defaults).
   const inputRowsRaw = Array.isArray(cfg?.inputTrackOrder)
@@ -1673,6 +1703,30 @@ async function init() {
 
   document.getElementById("wsUrl").addEventListener("change", updateApplyButton);
   document.getElementById("logJson").addEventListener("change", updateApplyButton);
+
+  const meteringSlider = document.getElementById("metering2IntervalMs");
+  if (meteringSlider) {
+    meteringSlider.addEventListener("input", () => {
+      setMeteringIntervalUi(meteringSlider.value);
+      updateApplyButton();
+    });
+    meteringSlider.addEventListener("change", () => {
+      setMeteringIntervalUi(meteringSlider.value);
+      updateApplyButton();
+    });
+  }
+
+  const meteringValue = document.getElementById("metering2IntervalMsValue");
+  if (meteringValue) {
+    meteringValue.addEventListener("input", () => {
+      setMeteringIntervalUi(meteringValue.value);
+      updateApplyButton();
+    });
+    meteringValue.addEventListener("change", () => {
+      setMeteringIntervalUi(meteringValue.value);
+      updateApplyButton();
+    });
+  }
 }
 
 init();

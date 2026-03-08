@@ -38,6 +38,13 @@ const NUMBER_OF_SENDS = 6; // Console 1 has 6 send slots
 let LOG_JSON = false; // Set to true to log all JSON messages to/from Mixing Station
 let LOG_METERING = false; // Set to true to log metering subscription + incoming metering frames
 
+// --- Metering (Mixing Station metering2) ---
+// Console 1 requests meters via `activeMeters`.
+// Mixing Station docs: interval min=30, max=1000 (global per client, last one wins).
+const METERING2_SUBSCRIPTION_ID = 0;
+let METERING2_INTERVAL_MS = 100;
+const METERING2_BINARY = false;
+
 // Console 1 identifies tracks by `trackId`.
 // Keep them stable for the lifetime of the process (so incremental updates keep working),
 // and ensure they're unique within this process (also across live layout rebuilds).
@@ -392,6 +399,7 @@ let BUS_TRACK_ORDER = [];
  * @property {(number|number[])[]} [inputTrackOrder]
  * @property {(number|number[])[]} [busTrackOrder]
  * @property {number[]} [c1SendToMsBusNumber]
+ * @property {number} [metering2IntervalMs]
  * @property {number} [console1MainColor]
  * @property {number} [console1BusColor]
  */
@@ -415,6 +423,7 @@ function isNonEmptyString(v) {
  * - inputTrackOrder
  * - busTrackOrder
  * - c1SendToMsBusNumber
+ * - metering2IntervalMs
  * - console1MainColor
  * - console1BusColor
  */
@@ -441,6 +450,7 @@ function loadBridgeConfig() {
     inputTrackOrder: fileConfig.inputTrackOrder,
     busTrackOrder: fileConfig.busTrackOrder,
     c1SendToMsBusNumber: fileConfig.c1SendToMsBusNumber,
+    metering2IntervalMs: fileConfig.metering2IntervalMs,
     console1MainColor: fileConfig.console1MainColor,
     console1BusColor: fileConfig.console1BusColor,
   };
@@ -465,6 +475,13 @@ function loadBridgeConfig() {
   if (Array.isArray(cfg.c1SendToMsBusNumber)) {
     C1_SEND_TO_MS_BUS_NUMBER = cfg.c1SendToMsBusNumber;
     rebuildSendMapping();
+  }
+
+  if (cfg.metering2IntervalMs !== undefined) {
+    const n = Number(cfg.metering2IntervalMs);
+    if (Number.isFinite(n)) {
+      METERING2_INTERVAL_MS = Math.max(30, Math.min(1000, Math.trunc(n)));
+    }
   }
 
   if (typeof cfg.console1MainColor === "number") CONSOLE1_MAIN_COLOR = cfg.console1MainColor;
@@ -993,9 +1010,6 @@ function setSendsMode(nextMsSendIndex) {
 //
 // Mixing Station metering2 (type 0) returns dB values in websocket messages at `/console/metering2/{id}`.
 // We convert dB -> linear amplitude and then to a peak-style 0..1 value (Cubase reference multiplies by sqrt(2)).
-const METERING2_SUBSCRIPTION_ID = 0;
-const METERING2_INTERVAL_MS = 100;
-const METERING2_BINARY = false;
 
 /**
  * Mixing Station uses non-padded base64 for metering2 binary payloads.

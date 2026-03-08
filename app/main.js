@@ -19,6 +19,7 @@ const VERBOSE_TERMINAL = process.argv.includes("--verbose");
  * @property {(number|number[])[]} inputTrackOrder
  * @property {(number|number[])[]} busTrackOrder
  * @property {number[]} c1SendToMsBusNumber
+ * @property {number|undefined} [metering2IntervalMs]
  * @property {number|undefined} [console1MainColor]
  * @property {number|undefined} [console1BusColor]
  */

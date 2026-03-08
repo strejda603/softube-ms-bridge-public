@@ -410,6 +410,16 @@ code {
   overflow: auto;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid var(--border);
+
+.range {
+  flex: 1;
+}
+
+.range-value {
+  min-width: 72px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
   border-radius: 10px;
   padding: 10px;
   font-family: var(--mono);

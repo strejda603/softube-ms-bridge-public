@@ -29,6 +29,8 @@ It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and 
 
 This repo includes an Electron-based GUI launcher (settings + presets + live logs).
 
+Settings include Mixing Station WS URL, metering interval, layout, send mapping, and colors.
+
 - Run the GUI:
 
   `npm run gui`
