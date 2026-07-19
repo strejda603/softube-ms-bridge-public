@@ -380,8 +380,11 @@ app.on("second-instance", (_event, argv, _workingDirectory) => {
   // argv can include injected Chromium/dev-mode switches we don't control
   // (e.g. --allow-file-access-from-files), so we don't warn on unrecognized
   // tokens here — recognized flags (--start/--stop/etc.) still work correctly
-  // regardless of that noise.
+  // regardless of that noise. Clear `warnings` too, not just the console.warn
+  // above: the renderer replays `args.warnings` into the GUI's own log panel,
+  // which would otherwise leak the same noise back in through that path.
   const args = parseCliArgs(getUserArgv(argv, app.isPackaged));
+  args.warnings = [];
 
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
