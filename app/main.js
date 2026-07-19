@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require("ele
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
+const { parseCliArgs, getUserArgv } = require("./cliArgs");
 
 // CLI flags
 // Usage: `npm run gui -- --verbose`
@@ -9,6 +10,21 @@ const { spawn } = require("child_process");
 // - Forces LOG_JSON=1 for the bridge process
 // - Hides bridge log lines from the GUI "Console Output" (renderer still receives lines for status)
 const VERBOSE_TERMINAL = process.argv.includes("--verbose");
+
+// Only one GUI instance may run at a time. A second launch (e.g. from a shell
+// script running `open -a "Softube Console 1 MS Bridge" --args --stop`) forwards
+// its CLI args to this instance via the "second-instance" event below, instead
+// of opening a duplicate window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  return;
+}
+
+/** Parsed once at process start; sent to the renderer after the window loads. */
+const initialCliArgs = parseCliArgs(getUserArgv(process.argv, app.isPackaged));
+for (const warning of initialCliArgs.warnings) {
+  console.warn(`[cli] ${warning}`);
+}
 
 /**
  * @typedef {object} BridgeConfig
@@ -41,6 +57,18 @@ const userDataPath = app.getPath("userData");
 /** @type {import('child_process').ChildProcessWithoutNullStreams | null} */
 let bridgeProcess = null;
 let isQuitting = false;
+/** @type {import('electron').BrowserWindow | null} */
+let mainWindow = null;
+
+/**
+ * Send parsed CLI args to the renderer over the `cli:apply` channel.
+ * @param {import('electron').BrowserWindow|null} win
+ * @param {ReturnType<typeof parseCliArgs>} args
+ */
+function sendCliArgsToRenderer(win, args) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send("cli:apply", args);
+}
 
 /**
  * Send a newline-delimited JSON control message to the bridge process.
@@ -199,9 +227,19 @@ function createWindow() {
     },
   });
 
+  mainWindow = win;
+
   win.loadFile(path.join(__dirname, "renderer", "index.html"),
     VERBOSE_TERMINAL ? { query: { verbose: "1" } } : undefined
   );
+
+  win.webContents.once("did-finish-load", () => {
+    sendCliArgsToRenderer(win, initialCliArgs);
+  });
+
+  win.on("closed", () => {
+    mainWindow = null;
+  });
 
   // Ensure the bridge is stopped before the window closes.
   win.on("close", (e) => {
@@ -336,6 +374,21 @@ function stopBridge() {
     bridgeProcess = null;
   }
 }
+
+app.on("second-instance", (_event, argv, _workingDirectory) => {
+  // Note: unlike the initial-launch argv, Electron's forwarded second-instance
+  // argv can include injected Chromium/dev-mode switches we don't control
+  // (e.g. --allow-file-access-from-files), so we don't warn on unrecognized
+  // tokens here — recognized flags (--start/--stop/etc.) still work correctly
+  // regardless of that noise.
+  const args = parseCliArgs(getUserArgv(argv, app.isPackaged));
+
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  sendCliArgsToRenderer(mainWindow, args);
+});
 
 app.whenReady().then(() => {
   migrateLegacyPresetsOnce();
