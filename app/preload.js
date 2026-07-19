@@ -37,6 +37,36 @@ const { contextBridge, ipcRenderer } = require("electron");
  * This is the only supported way for renderer code to talk to Electron.
  */
 
+/**
+ * @typedef {object} ParsedCliArgs
+ * @property {boolean} start
+ * @property {boolean} stop
+ * @property {string|null} preset
+ * @property {string|null} ws
+ * @property {number|null} interval
+ * @property {boolean} log
+ * @property {boolean} verbose
+ * @property {string[]} warnings
+ */
+
+/**
+ * Buffer for a `cli:apply` message that arrives before the renderer has
+ * called `bridge.onCliArgs(...)` (e.g. a fast `second-instance` forward
+ * racing the page's own startup). Only the most recent message is kept.
+ * @type {ParsedCliArgs|null}
+ */
+let pendingCliArgs = null;
+/** @type {((args: ParsedCliArgs) => void)|null} */
+let cliArgsCallback = null;
+
+ipcRenderer.on("cli:apply", (_evt, args) => {
+  if (cliArgsCallback) {
+    cliArgsCallback(args);
+  } else {
+    pendingCliArgs = args;
+  }
+});
+
 contextBridge.exposeInMainWorld("bridge", {
   /** @param {BridgeConfig} config */
   start: (config) => ipcRenderer.invoke("bridge:start", config),
@@ -59,6 +89,23 @@ contextBridge.exposeInMainWorld("bridge", {
     const listener = (_evt, line) => cb(line);
     ipcRenderer.on("bridge:log", listener);
     return () => ipcRenderer.removeListener("bridge:log", listener);
+  },
+
+  /**
+   * Subscribe to parsed launch/forwarded CLI args. Delivers immediately if
+   * one arrived before this was called (see `pendingCliArgs` above).
+   *
+   * @param {(args: ParsedCliArgs) => void} cb
+   * @example
+   * bridge.onCliArgs((args) => { if (args.start) startBridgeFromForm(); });
+   */
+  onCliArgs: (cb) => {
+    cliArgsCallback = cb;
+    if (pendingCliArgs) {
+      const args = pendingCliArgs;
+      pendingCliArgs = null;
+      cb(args);
+    }
   },
 });
 
