@@ -22,6 +22,12 @@ SHASUMS256.txt
 **/package-lock.json
 compile_commands.json
 .envrc
+.worktrees/
+
+### AI ###
+.claude/
+.omc
+docs/superpowers/
 
 ### Node ###
 # Logs
