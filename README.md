@@ -45,6 +45,26 @@ Or use the convenience script:
 
 - `npm run gui:verbose`
 
+### Command-line arguments
+
+The GUI accepts these flags, e.g. `npm run gui -- --preset "Show A" --start`:
+
+| Flag | Effect |
+|---|---|
+| `--start` | Auto-start the bridge with the resolved config |
+| `--stop` | Stop the bridge if running (window stays open) |
+| `--preset "Name"` | Load a preset by its display name before starting |
+| `--ws "host:port"` | Override the Mixing Station WebSocket URL for this session only (not saved) |
+| `--interval <ms>` | Override the metering interval (30-1000ms) for this session only (not saved) |
+| `--log` | Enable JSON debug logging for this session |
+| `--verbose` | Print bridge logs to the launching Terminal (unchanged, existing flag) |
+
+Only one GUI instance runs at a time. Launching again with flags (e.g. from a shell script or
+`open -a "Softube Console 1 MS Bridge" --args --stop`) forwards those flags to the already-running
+instance instead of opening a second window.
+
+`--start` and `--stop` together are treated as a mistake and both are ignored (a warning is logged).
+
 ## What it supports
 
 - Track layout with custom ordering (inputs + buses + main), banked 10-wide for Console 1
