@@ -4,6 +4,7 @@
   "description": "Bridge between Softube Console 1 and Mixing Station API",
   "main": "index.js",
   "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
     "start": "node index.js",
     "fake:meters": "node tools/fake-metering-proxy.js --verbose",
     "fake:meters:proxy": "node tools/fake-metering-proxy.js --listen 8081 --upstream ws://127.0.0.1:8080",
