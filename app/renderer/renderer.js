@@ -1350,6 +1350,114 @@ function currentPresetPayload(nameOverride) {
   };
 }
 
+/**
+ * Start the bridge using the currently loaded form/config. Shared by the Start
+ * button and `--start` CLI handling. No-ops if the bridge is already running
+ * (the Start button is disabled in that state, but the CLI path has no such
+ * guard — without this check a `--start` forwarded to an already-running
+ * instance would hit the main process's "already running" throw and flip the
+ * status badge to Error even though the bridge is fine).
+ */
+async function startBridgeFromForm() {
+  if (uiRunning) return;
+  try {
+    const config = getConfigFromForm();
+    await bridge.start(config);
+    appendLog("[GUI] Bridge started");
+    setStatusUi({ running: true, error: false });
+    setModeUi("Standard");
+    stopRequestedByUser = false;
+
+    lastStartedConfigKey = canonicalizeConfigForCompare(config);
+    updateApplyButton();
+  } catch (e) {
+    appendLog(`[GUI] Failed to start: ${e?.message || e}`);
+    setStatusUi({ error: true });
+  }
+}
+
+/**
+ * Stop the bridge if running. Shared by the Stop button and `--stop` CLI
+ * handling. No-ops if the bridge isn't running (the Stop button is disabled
+ * in that state, but the CLI path has no such guard, hence the check here).
+ */
+async function stopBridgeFromUi() {
+  if (!uiRunning) return;
+  try {
+    stopRequestedByUser = true;
+    await bridge.stop();
+    appendLog("[GUI] Bridge stopped");
+  } finally {
+    setStatusUi({ running: false, error: false });
+    setModeUi("—");
+
+    lastStartedConfigKey = "";
+    updateApplyButton();
+  }
+}
+
+/**
+ * Apply parsed CLI args (from a fresh launch or a forwarded second instance).
+ *
+ * Order matters: preset load happens first, then ws/interval/log overrides
+ * are applied on top (so CLI overrides always win over the preset's saved
+ * values), then start/stop.
+ *
+ * @param {{start:boolean, stop:boolean, preset:string|null, ws:string|null, interval:number|null, log:boolean, warnings:string[]}} args
+ */
+async function applyCliArgs(args) {
+  if (!args) return;
+
+  for (const warning of args.warnings || []) {
+    appendLog(`[GUI] CLI: ${warning}`);
+  }
+
+  let presetLoadFailed = false;
+
+  if (args.preset) {
+    const sel = document.getElementById("presetSelect");
+    const wanted = String(args.preset).trim().toLowerCase();
+    const match = Array.from(sel.options).find(
+      (opt) => opt.value && opt.textContent.trim().toLowerCase() === wanted
+    );
+    if (match) {
+      sel.value = match.value;
+      syncPresetActionButtons();
+      try {
+        await loadPresetById(match.value);
+      } catch (e) {
+        presetLoadFailed = true;
+        appendLog(`[GUI] Failed to load preset "${args.preset}": ${e?.message || e}`);
+      }
+    } else {
+      appendLog(`[GUI] --preset "${args.preset}" not found; keeping current preset`);
+    }
+  }
+
+  if (typeof args.ws === "string" && args.ws.trim()) {
+    const wsValue = args.ws.trim();
+    document.getElementById("wsUrl").value = /^wss?:\/\//i.test(wsValue)
+      ? wsValue
+      : `ws://${wsValue}`;
+  }
+
+  if (typeof args.interval === "number" && Number.isFinite(args.interval)) {
+    setMeteringIntervalUi(args.interval);
+  }
+
+  if (args.log) {
+    document.getElementById("logJson").checked = true;
+  }
+
+  updateApplyButton();
+
+  if (args.start && !presetLoadFailed) {
+    await startBridgeFromForm();
+  } else if (args.stop) {
+    await stopBridgeFromUi();
+  }
+}
+
 async function init() {
   setFormFromConfig(
     makeDefaultConfig({ inputCount: state.inputTotalCount, busCount: state.busTotalCount })
@@ -1393,6 +1501,12 @@ async function init() {
     }
   });
 
+  bridge.onCliArgs((args) => {
+    applyCliArgs(args).catch((e) => {
+      appendLog(`[GUI] Failed to apply CLI args: ${e?.message || e}`);
+    });
+  });
+
   // Keep status correct if GUI is reloaded.
   try {
     const st = await bridge.status();
@@ -1404,36 +1518,8 @@ async function init() {
     setStatusUi({ running: false, error: false });
   }
 
-  document.getElementById("btnStart").addEventListener("click", async () => {
-    try {
-      const config = getConfigFromForm();
-      await bridge.start(config);
-      appendLog("[GUI] Bridge started");
-      setStatusUi({ running: true, error: false });
-      setModeUi("Standard");
-      stopRequestedByUser = false;
-
-      lastStartedConfigKey = canonicalizeConfigForCompare(config);
-      updateApplyButton();
-    } catch (e) {
-      appendLog(`[GUI] Failed to start: ${e?.message || e}`);
-      setStatusUi({ error: true });
-    }
-  });
-
-  document.getElementById("btnStop").addEventListener("click", async () => {
-    try {
-      stopRequestedByUser = true;
-      await bridge.stop();
-      appendLog("[GUI] Bridge stopped");
-    } finally {
-      setStatusUi({ running: false, error: false });
-      setModeUi("—");
-
-      lastStartedConfigKey = "";
-      updateApplyButton();
-    }
-  });
+  document.getElementById("btnStart").addEventListener("click", startBridgeFromForm);
+  document.getElementById("btnStop").addEventListener("click", stopBridgeFromUi);
 
   document.getElementById("btnApply").addEventListener("click", async () => {
     if (!uiRunning) return;
