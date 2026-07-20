@@ -80,3 +80,16 @@ test("hardwareTriggerTypeFor: selected=false or undefined is not a trigger", () 
   assert.equal(hardwareTriggerTypeFor("standby", undefined), null);
   assert.equal(hardwareTriggerTypeFor("running", false), null);
 });
+
+test("hardwareTriggerTypeFor: only literal true triggers, not merely truthy values", () => {
+  assert.equal(hardwareTriggerTypeFor("standby", 1), null);
+  assert.equal(hardwareTriggerTypeFor("standby", "true"), null);
+  assert.equal(hardwareTriggerTypeFor("standby", {}), null);
+});
+
+test("buildStatusBankSlots: the built start slot's objectId matches START_SLOT_OBJECT_ID", () => {
+  const slots = buildStatusBankSlots();
+  const startSlot = slots.find((s) => s.kind === "start");
+  assert.equal(startSlot.objectId, START_SLOT_OBJECT_ID);
+  assert.ok(STATUS_BANK_INDICATORS.length <= STATUS_BANK_SIZE - 1);
+});
