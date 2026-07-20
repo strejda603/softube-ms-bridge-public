@@ -2023,10 +2023,16 @@ function deactivateRealChannelTracks(forceSend = false) {
  * initial state at process start.
  */
 function enterStandbyState() {
+  // Set before closing the socket: the WS "close" handler below reads this to decide
+  // whether to schedule its usual auto-reconnect, and that event fires asynchronously —
+  // this must already read "standby" by the time it does.
   bridgeLifecycle = "standby";
   console.log("[Lifecycle] standby");
 
-  if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
+  if (
+    msWebSocket &&
+    (msWebSocket.readyState === WebSocket.OPEN || msWebSocket.readyState === WebSocket.CONNECTING)
+  ) {
     msWebSocket.close();
   }
   if (wsReconnectTimeout) {
@@ -2402,14 +2408,22 @@ function connectMixingStationWebSocket() {
   });
 
   msWebSocket.on("close", () => {
-    const delay = 2000; // fixed 2 seconds
-    console.warn(`Mixing Station WebSocket closed, reconnecting in ${delay / 1000}s...`);
-    if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
-    wsReconnectTimeout = setTimeout(connectMixingStationWebSocket, delay);
     if (wsHeartbeatInterval) {
       clearInterval(wsHeartbeatInterval);
       wsHeartbeatInterval = null;
     }
+
+    // Standby intentionally closes this socket (see enterStandbyState) — don't schedule
+    // the usual auto-reconnect in that case, or standby would silently reconnect ~2s later.
+    if (bridgeLifecycle !== "running") {
+      console.log("Mixing Station WebSocket closed (standby, not reconnecting).");
+      return;
+    }
+
+    const delay = 2000; // fixed 2 seconds
+    console.warn(`Mixing Station WebSocket closed, reconnecting in ${delay / 1000}s...`);
+    if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
+    wsReconnectTimeout = setTimeout(connectMixingStationWebSocket, delay);
 
     if (initFlushTimeoutId) {
       clearTimeout(initFlushTimeoutId);
