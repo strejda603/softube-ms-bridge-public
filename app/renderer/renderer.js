@@ -1469,8 +1469,21 @@ const STATUS_DOT_ELEMENT_IDS = {
   abletonLive: "indAbletonLive",
 };
 
+/** MIDI-device fields say "connected"; running-app fields say "running". */
+const STATUS_DOT_VERB = {
+  ipad: "connected",
+  spdSxPro: "connected",
+  midiMaestro: "connected",
+  bomeMtp: "running",
+  mixingStation: "running",
+  console1Osd: "running",
+  abletonLive: "running",
+};
+
 /**
- * Toggle the `.on` class on each topbar status dot per the given snapshot.
+ * Toggle the `.on` class on each topbar status dot per the given snapshot,
+ * and keep `aria-label` in sync (color alone isn't accessible to screen
+ * readers or keyboard users; `title` is hover-only).
  * @param {Record<string, boolean>} status
  */
 function applyStatusIndicators(status) {
@@ -1478,7 +1491,10 @@ function applyStatusIndicators(status) {
   for (const [field, elementId] of Object.entries(STATUS_DOT_ELEMENT_IDS)) {
     const el = document.getElementById(elementId);
     if (!el) continue;
-    el.classList.toggle("on", !!status[field]);
+    const isOn = !!status[field];
+    el.classList.toggle("on", isOn);
+    const verb = STATUS_DOT_VERB[field];
+    el.setAttribute("aria-label", `${el.title}: ${isOn ? verb : `not ${verb}`}`);
   }
 }
 
