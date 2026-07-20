@@ -26,8 +26,9 @@ compile_commands.json
 
 ### AI ###
 .claude/
-.omc
+.omc/
 docs/superpowers/
+graphify-out/
 
 ### Node ###
 # Logs
