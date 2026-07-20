@@ -176,3 +176,11 @@ On `SIGINT`/`SIGTERM` (Ctrl+C):
 - Need more visibility:
   - Set `LOG_JSON = true` in [index.js](index.js) to log WS/MIDI JSON payloads.
   - Set `LOG_METERING = true` in [index.js](index.js) to log metering parsing + subscription details.
+
+- A topbar status dot (iPad/SPD-SX PRO/MIDI Maestro/Bome MIDI Translator Pro/Mixing
+  Station/Console 1 On-Screen Display/Ableton Live 12 Suite) never turns green despite the
+  device/app being present:
+  - The match string in [app/statusMonitor.js](app/statusMonitor.js) likely doesn't match what
+    your system actually reports. Check the exact MIDI port name in Audio MIDI Setup, or the exact
+    process name via `ps -Ao args= | grep -i <app name>`, and adjust the corresponding string in
+    `computeStatus()`.
