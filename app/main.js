@@ -238,6 +238,12 @@ function createWindow() {
 
   win.webContents.once("did-finish-load", () => {
     sendCliArgsToRenderer(win, initialCliArgs);
+    // Starting the monitor here (rather than immediately after createWindow())
+    // guarantees the renderer/preload has registered its `status:update`
+    // listener before the first snapshot is sent — otherwise a device/app
+    // already present at launch could send its first (only, since the
+    // poller only re-sends on change) update before anyone is listening.
+    stopStatusMonitor = startStatusMonitor(win);
   });
 
   win.on("closed", () => {
@@ -399,7 +405,6 @@ app.on("second-instance", (_event, argv, _workingDirectory) => {
 app.whenReady().then(() => {
   migrateLegacyPresetsOnce();
   createWindow();
-  stopStatusMonitor = startStatusMonitor(mainWindow);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
