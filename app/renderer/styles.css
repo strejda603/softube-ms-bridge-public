@@ -80,6 +80,26 @@ code {
   gap: 10px;
 }
 
+.status-indicators {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.7);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.status-dot.on {
+  background: rgba(34, 197, 94, 0.9);
+}
+
 .hidden {
   display: none !important;
 }

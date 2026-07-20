@@ -1458,6 +1458,30 @@ async function applyCliArgs(args) {
   }
 }
 
+/** Maps a status field name to its topbar dot element id. */
+const STATUS_DOT_ELEMENT_IDS = {
+  ipad: "indIpad",
+  spdSxPro: "indSpdSxPro",
+  midiMaestro: "indMidiMaestro",
+  bomeMtp: "indBomeMtp",
+  mixingStation: "indMixingStation",
+  console1Osd: "indConsole1Osd",
+  abletonLive: "indAbletonLive",
+};
+
+/**
+ * Toggle the `.on` class on each topbar status dot per the given snapshot.
+ * @param {Record<string, boolean>} status
+ */
+function applyStatusIndicators(status) {
+  if (!status) return;
+  for (const [field, elementId] of Object.entries(STATUS_DOT_ELEMENT_IDS)) {
+    const el = document.getElementById(elementId);
+    if (!el) continue;
+    el.classList.toggle("on", !!status[field]);
+  }
+}
+
 async function init() {
   setFormFromConfig(
     makeDefaultConfig({ inputCount: state.inputTotalCount, busCount: state.busTotalCount })
@@ -1505,6 +1529,10 @@ async function init() {
     applyCliArgs(args).catch((e) => {
       appendLog(`[GUI] Failed to apply CLI args: ${e?.message || e}`);
     });
+  });
+
+  bridge.onStatusUpdate((status) => {
+    applyStatusIndicators(status);
   });
 
   // Keep status correct if GUI is reloaded.
