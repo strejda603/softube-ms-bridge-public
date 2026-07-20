@@ -3480,15 +3480,6 @@ function resolveMidiTrackContext(parsed) {
 }
 
 /**
- * Handles incoming MIDI messages, specifically SysEx JSON messages, and processes them
- * according to their type. Delegates control messages to `handleConsole1ControlJson`,
- * and for track-related messages, updates volume, mute, solo, pan, selection, and send slots.
- * Writes resulting changes to the MS Bridge via `queueMsWrite`.
- *
- * @param {number} deltaTime - The time elapsed since the last MIDI message, in milliseconds.
- * @param {Uint8Array} message - The raw MIDI message data.
- */
-/**
  * Handle an incoming Console 1 MIDI message for a status/Start bank slot (bank 0). These
  * slots have no Mixing Station channel, so no MS writes are ever produced here — only the
  * Start slot's `selected` field is meaningful, as the hardware Start/Stop trigger.
@@ -3503,6 +3494,15 @@ function handleStatusOrStartSlotMidiMessage(parsed, slot) {
   process.stdout.write(`@@BRIDGE_EVENT@@${JSON.stringify({ type: `hardware:${triggerType}` })}\n`);
 }
 
+/**
+ * Handles incoming MIDI messages, specifically SysEx JSON messages, and processes them
+ * according to their type. Delegates control messages to `handleConsole1ControlJson`,
+ * and for track-related messages, updates volume, mute, solo, pan, selection, and send slots.
+ * Writes resulting changes to the MS Bridge via `queueMsWrite`.
+ *
+ * @param {number} deltaTime - The time elapsed since the last MIDI message, in milliseconds.
+ * @param {Uint8Array} message - The raw MIDI message data.
+ */
 function handleMidiMessage(deltaTime, message) {
   const parsed = parseSysexJson(message);
   if (!parsed) return;
