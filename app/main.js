@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
 const { parseCliArgs, getUserArgv } = require("./cliArgs");
+const { startStatusMonitor } = require("./statusMonitor");
 
 // CLI flags
 // Usage: `npm run gui -- --verbose`
@@ -59,6 +60,8 @@ let bridgeProcess = null;
 let isQuitting = false;
 /** @type {import('electron').BrowserWindow | null} */
 let mainWindow = null;
+/** @type {(() => void) | null} */
+let stopStatusMonitor = null;
 
 /**
  * Send parsed CLI args to the renderer over the `cli:apply` channel.
@@ -396,6 +399,7 @@ app.on("second-instance", (_event, argv, _workingDirectory) => {
 app.whenReady().then(() => {
   migrateLegacyPresetsOnce();
   createWindow();
+  stopStatusMonitor = startStatusMonitor(mainWindow);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -405,6 +409,13 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   // Quit even on macOS; but ensure bridge has been stopped.
   app.quit();
+});
+
+app.on("before-quit", () => {
+  if (stopStatusMonitor) {
+    stopStatusMonitor();
+    stopStatusMonitor = null;
+  }
 });
 
 app.on("before-quit", (e) => {
