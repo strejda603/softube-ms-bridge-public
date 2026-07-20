@@ -67,6 +67,24 @@ ipcRenderer.on("cli:apply", (_evt, args) => {
   }
 });
 
+/**
+ * Buffer for a `status:update` message that arrives before the renderer has
+ * called `bridge.onStatusUpdate(...)`. Same one-slot, last-message-wins
+ * approach as `pendingCliArgs` above.
+ * @type {object|null}
+ */
+let pendingStatusUpdate = null;
+/** @type {((status: object) => void)|null} */
+let statusUpdateCallback = null;
+
+ipcRenderer.on("status:update", (_evt, status) => {
+  if (statusUpdateCallback) {
+    statusUpdateCallback(status);
+  } else {
+    pendingStatusUpdate = status;
+  }
+});
+
 contextBridge.exposeInMainWorld("bridge", {
   /** @param {BridgeConfig} config */
   start: (config) => ipcRenderer.invoke("bridge:start", config),
@@ -105,6 +123,23 @@ contextBridge.exposeInMainWorld("bridge", {
       const args = pendingCliArgs;
       pendingCliArgs = null;
       cb(args);
+    }
+  },
+
+  /**
+   * Subscribe to topbar status indicator updates. Delivers immediately if one
+   * arrived before this was called (same buffering pattern as `onCliArgs`).
+   *
+   * @param {(status: {ipad:boolean, spdSxPro:boolean, midiMaestro:boolean, bomeMtp:boolean, mixingStation:boolean, console1Osd:boolean, abletonLive:boolean}) => void} cb
+   * @example
+   * bridge.onStatusUpdate((status) => { console.log(status.ipad); });
+   */
+  onStatusUpdate: (cb) => {
+    statusUpdateCallback = cb;
+    if (pendingStatusUpdate) {
+      const status = pendingStatusUpdate;
+      pendingStatusUpdate = null;
+      cb(status);
     }
   },
 });
