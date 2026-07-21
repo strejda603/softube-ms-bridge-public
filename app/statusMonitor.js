@@ -101,9 +101,12 @@ function gatherPsOutput() {
  *
  * @param {import('electron').BrowserWindow|null} win
  * @param {number} [intervalMs=2000]
+ * @param {(status: StatusSnapshot) => void} [onChange] - optional, called with the same
+ *   status object whenever it changes (in addition to the `win` IPC send) — e.g. to also
+ *   forward it to the bridge child process.
  * @returns {() => void} stop function; call to clear the interval
  */
-function startStatusMonitor(win, intervalMs = 2000) {
+function startStatusMonitor(win, intervalMs = 2000, onChange) {
   let lastSentKey = null;
   let midiWarned = false;
   let psWarned = false;
@@ -136,6 +139,7 @@ function startStatusMonitor(win, intervalMs = 2000) {
     lastSentKey = key;
 
     if (win && !win.isDestroyed()) win.webContents.send("status:update", status);
+    if (typeof onChange === "function") onChange(status);
   }
 
   tick();
