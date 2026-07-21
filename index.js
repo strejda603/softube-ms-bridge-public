@@ -2412,6 +2412,13 @@ function connectMixingStationWebSocket() {
       clearInterval(wsHeartbeatInterval);
       wsHeartbeatInterval = null;
     }
+    // Clear regardless of branch below: a pending init-flush timeout left over from a very
+    // recent connect (e.g. rapid Start-then-Stop) must not fire during standby — it would
+    // force-send a stale full track dump via `finalizeInitialization()`.
+    if (initFlushTimeoutId) {
+      clearTimeout(initFlushTimeoutId);
+      initFlushTimeoutId = null;
+    }
 
     // Standby intentionally closes this socket (see enterStandbyState) — don't schedule
     // the usual auto-reconnect in that case, or standby would silently reconnect ~2s later.
@@ -2424,11 +2431,6 @@ function connectMixingStationWebSocket() {
     console.warn(`Mixing Station WebSocket closed, reconnecting in ${delay / 1000}s...`);
     if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
     wsReconnectTimeout = setTimeout(connectMixingStationWebSocket, delay);
-
-    if (initFlushTimeoutId) {
-      clearTimeout(initFlushTimeoutId);
-      initFlushTimeoutId = null;
-    }
   });
 
   msWebSocket.on("error", (err) => {
@@ -2618,7 +2620,16 @@ function handleConsole1ControlJson(parsed) {
       // Re-send handshake, then force a full track dump.
       disableOSD();
       startHandshake();
-      scheduleConsole1FullResync("console reset");
+      if (bridgeLifecycle === "running") {
+        scheduleConsole1FullResync("console reset");
+      } else {
+        // In standby there's no Mixing Station data to resync, and `finalizeInitialization()`
+        // (which `scheduleConsole1FullResync` schedules) would otherwise create AND activate
+        // default tracks for every real channel slot in `trackLayout`, undoing standby's
+        // deactivation. Just re-affirm the status/Start bank instead.
+        sendStatusBankTracks(true);
+        applyStartSlotDisplay();
+      }
       return;
     }
     if (parsed.cmd === "ENABLE") {
