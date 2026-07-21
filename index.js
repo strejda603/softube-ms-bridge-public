@@ -2070,7 +2070,7 @@ function deactivateRealChannelTracks(forceSend = false) {
 
 /**
  * Enter `standby`: disconnect from Mixing Station (if connected), deactivate the real
- * channel banks' display, and show "Start"/`CONSOLE1_MAIN_COLOR` on the Start slot. The
+ * channel banks' display, and show "Start"/`CONSOLE1_START_COLOR` on the Start slot. The
  * status/Start bank itself stays visible throughout — this is also used as the bridge's
  * initial state at process start.
  */
