@@ -2645,7 +2645,11 @@ function handleConsole1ControlJson(parsed) {
     if (parsed.handshake && parsed.handshake.ack === true) {
       enableOSD();
       // If init hasn't completed yet, allow it to complete naturally; otherwise force a dump.
-      if (!hasSentInitialTrackDump) {
+      // Same standby-leak concern as the RESET branch above: finalizeInitialization() would
+      // activate every real channel slot, so only do this while actually running. This path
+      // is reachable during standby because the RESET branch's startHandshake() solicits
+      // this very ack.
+      if (!hasSentInitialTrackDump && bridgeLifecycle === "running") {
         finalizeInitialization("handshake ack");
       }
     }
