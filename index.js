@@ -683,12 +683,23 @@ function installRuntimeControlChannel() {
       }
 
       if (msg && msg.type === "config:apply") {
-        try {
-          const cfg = msg.config || {};
-          const res = applyRuntimeConfigAndResync(cfg, "config apply");
-          if (LOG_JSON) console.log("[config] apply result", res);
-        } catch (e) {
-          console.warn("[config] Failed to apply config:", e?.message || e);
+        // Standby-leak guard: applyRuntimeConfigAndResync() forces a full resync (creates
+        // and activates real channel tracks), same concern as the RESET/handshake-ack/
+        // open-handler guards elsewhere in this file. The GUI is only supposed to send this
+        // while running, but that's an assumption about the caller, not something this
+        // process can verify — a caller whose own state has drifted (e.g. it optimistically
+        // marked itself "running" before this process actually confirmed it) could still
+        // send one during standby, so guard defensively here too.
+        if (bridgeLifecycle !== "running") {
+          console.warn("[Lifecycle] Ignoring config:apply — not running.");
+        } else {
+          try {
+            const cfg = msg.config || {};
+            const res = applyRuntimeConfigAndResync(cfg, "config apply");
+            if (LOG_JSON) console.log("[config] apply result", res);
+          } catch (e) {
+            console.warn("[config] Failed to apply config:", e?.message || e);
+          }
         }
       }
 
@@ -2367,6 +2378,20 @@ function connectMixingStationWebSocket() {
       await fetchAndApplyConsoleInformation(600);
     } catch {
       // ignore
+    }
+
+    // Standby may have been entered while this await was in flight (e.g. Start then Stop
+    // within the ~600ms console-information round trip). Same standby-leak concern as the
+    // other guards in this file: resetting init state / scheduling finalizeInitialization
+    // below would re-activate real channel tracks during standby. Bail out and let the
+    // (already-triggered) close handle teardown.
+    if (bridgeLifecycle !== "running") {
+      try {
+        msWebSocket.close();
+      } catch {
+        // ignore
+      }
+      return;
     }
 
     // Reset init state on each connect/reconnect.
