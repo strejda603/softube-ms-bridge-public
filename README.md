@@ -162,6 +162,11 @@ Start/Stop. Start/Stop instead toggle between two states:
   Mixing Station connection.
 - **Running**: full bridging active, plus the status bank continues to be shown.
 
+The 7 status slots (iPad, SPD-SX PRO, MIDI Maestro, Bome MIDI Translator Pro, Mixing Station,
+Console 1 On-Screen Display, Ableton Live 12 Suite) show green when present, red when not —
+mirroring the GUI's own topbar dots — and update live in either lifecycle state, roughly every 2
+seconds.
+
 The status bank's 10th slot doubles as a physical Start/Stop button — pressing it while in standby
 starts the bridge (using whatever preset is currently loaded in the GUI), pressing it while running
 stops it. It shows "Start" (orange) or "Stop" (red) accordingly.
