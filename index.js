@@ -1981,10 +1981,12 @@ function getOrCreateTrackInfo(objectId) {
 /**
  * Update the 7 status indicator slots' colors from a live status snapshot (Feature A's
  * `computeStatus()` shape, forwarded from the GUI via `status:update`). Applies regardless
- * of lifecycle state — this only touches already-cached slot objects via
- * `queueConsole1TrackUpdate`, never `finalizeInitialization()`/`batchSendAllTracks()`, so it
- * carries none of the standby-leak risk those functions do.
- * @param {Record<string, boolean>} status
+ * of lifecycle state — this only touches per-slot cached track objects (creating them on
+ * demand via `getOrCreateTrackInfo`) and sends targeted updates via `queueConsole1TrackUpdate`,
+ * never `finalizeInitialization()`/`batchSendAllTracks()`, so it carries none of the
+ * standby-leak risk those functions do.
+ * @param {Record<string, boolean|undefined>} status - a missing/non-boolean value for a key
+ *   is treated as "off" by `statusSlotColorFor`, not an error.
  */
 function applyLiveStatusColors(status) {
   for (let objectId = 0; objectId < trackLayout.length; objectId++) {
