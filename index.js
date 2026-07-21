@@ -29,6 +29,7 @@ const {
   buildStatusBankSlots,
   startSlotDisplayFor,
   hardwareTriggerTypeFor,
+  statusSlotColorFor,
   START_SLOT_OBJECT_ID,
 } = require("./console1StatusBank");
 
@@ -227,6 +228,12 @@ let CONSOLE1_BUS_COLOR = 0x800080; // Purple (r=128,g=0,b=128)
 // Status/Start bank (bank 0) colors. Not user-configurable (unlike the two above), since
 // this bank's contents are fixed by the feature, not by the user's channel layout.
 const CONSOLE1_STOP_COLOR = 0x0000ff; // Pure red (matches MS_PALETTE_BASE_COLORS[1] "Red")
+// Separate from CONSOLE1_MAIN_COLOR (which is also the Main bus track's color) so the
+// Start slot's "not running" color can be tuned independently later.
+const CONSOLE1_START_COLOR = 0x00a5ff; // Same value as CONSOLE1_MAIN_COLOR today
+// Status indicator (bank 0, slots 0-6) on/off colors, driven by live Feature A data (B2).
+const CONSOLE1_STATUS_ON_COLOR = 0x00ff00; // Pure green (matches MS_PALETTE_BASE_COLORS[2] "Green")
+const CONSOLE1_STATUS_OFF_COLOR = 0x0000ff; // Pure red — same value as CONSOLE1_STOP_COLOR, distinct constant
 
 // Mixing Station color mapping.
 // MS may provide a palette index (0..15), a `styleClass` string, or an already-encoded RGB int.
@@ -728,6 +735,14 @@ function installRuntimeControlChannel() {
           } catch (e) {
             console.warn("[Lifecycle] Failed to enter standby state:", e?.message || e);
           }
+        }
+      }
+
+      if (msg && msg.type === "status:update") {
+        try {
+          applyLiveStatusColors(msg.status || {});
+        } catch (e) {
+          console.warn("[status] Failed to apply live status colors:", e?.message || e);
         }
       }
     }
@@ -1858,11 +1873,11 @@ function createDefaultTrackForSlot(objectId) {
   else if (kind === "empty") isActive = false;
   else if (kind === "status") {
     name = slot.statusLabel || "";
-    // B1: fixed placeholder color. Milestone B2 wires this to Feature A's live
-    // MIDI/process detection data instead.
-    color = CONSOLE1_STOP_COLOR;
+    // Default to "off" until the first status:update arrives from the GUI's live
+    // MIDI/process detection (Feature A) — see applyLiveStatusColors() below.
+    color = CONSOLE1_STATUS_OFF_COLOR;
   } else if (kind === "start") {
-    const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_MAIN_COLOR, CONSOLE1_STOP_COLOR);
+    const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_START_COLOR, CONSOLE1_STOP_COLOR);
     name = display.name;
     color = display.color;
   }
@@ -1964,12 +1979,38 @@ function getOrCreateTrackInfo(objectId) {
 }
 
 /**
+ * Update the 7 status indicator slots' colors from a live status snapshot (Feature A's
+ * `computeStatus()` shape, forwarded from the GUI via `status:update`). Applies regardless
+ * of lifecycle state — this only touches already-cached slot objects via
+ * `queueConsole1TrackUpdate`, never `finalizeInitialization()`/`batchSendAllTracks()`, so it
+ * carries none of the standby-leak risk those functions do.
+ * @param {Record<string, boolean>} status
+ */
+function applyLiveStatusColors(status) {
+  for (let objectId = 0; objectId < trackLayout.length; objectId++) {
+    const slot = trackLayout[objectId];
+    if (!slot || slot.kind !== "status") continue;
+
+    const track = getOrCreateTrackInfo(objectId);
+    const color = statusSlotColorFor(
+      status[slot.statusKey],
+      CONSOLE1_STATUS_ON_COLOR,
+      CONSOLE1_STATUS_OFF_COLOR
+    );
+    if (track.color !== color) {
+      track.color = color;
+      queueConsole1TrackUpdate(track.trackId, { color });
+    }
+  }
+}
+
+/**
  * Push the Start slot's current name/color (per `bridgeLifecycle`) to Console 1. Creates the
  * track on demand if it doesn't exist yet. No-ops if nothing actually changed.
  */
 function applyStartSlotDisplay() {
   const track = getOrCreateTrackInfo(START_SLOT_OBJECT_ID);
-  const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_MAIN_COLOR, CONSOLE1_STOP_COLOR);
+  const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_START_COLOR, CONSOLE1_STOP_COLOR);
   /** @type {Record<string, any>} */
   const partial = {};
   if (track.name !== display.name) {
