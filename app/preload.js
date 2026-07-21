@@ -110,6 +110,24 @@ contextBridge.exposeInMainWorld("bridge", {
   },
 
   /**
+   * Subscribe to hardware Start/Stop triggers from the Console 1 Fader's status bank.
+   *
+   * Unlike `onCliArgs`/`onStatusUpdate`, this is deliberately NOT the one-slot-buffered
+   * pattern — a hardware press can happen repeatedly throughout a session, not just once at
+   * launch, so it follows `onLog`'s always-on multi-listener shape instead.
+   *
+   * @param {(trigger: {type: "start"|"stop"}) => void} cb
+   * @returns {()=>void} unsubscribe
+   * @example
+   * const off = bridge.onHardwareTrigger((t) => { if (t.type === "start") startBridgeFromForm(); });
+   */
+  onHardwareTrigger: (cb) => {
+    const listener = (_evt, trigger) => cb(trigger);
+    ipcRenderer.on("bridge:hardwareTrigger", listener);
+    return () => ipcRenderer.removeListener("bridge:hardwareTrigger", listener);
+  },
+
+  /**
    * Subscribe to parsed launch/forwarded CLI args. Delivers immediately if
    * one arrived before this was called (see `pendingCliArgs` above).
    *

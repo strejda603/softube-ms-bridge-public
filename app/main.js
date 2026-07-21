@@ -62,6 +62,18 @@ let isQuitting = false;
 let mainWindow = null;
 /** @type {(() => void) | null} */
 let stopStatusMonitor = null;
+/**
+ * The bridge process is spawned once and stays alive until the app quits; this tracks
+ * which of its two lifecycle states (see `index.js`) it's currently in.
+ * @type {"standby"|"running"}
+ */
+let bridgeLifecycleState = "standby";
+
+/**
+ * Prefix marking a structured event line on the bridge process's stdout, as opposed to a
+ * plain human-readable log line. See `index.js`'s `@@BRIDGE_EVENT@@` convention.
+ */
+const BRIDGE_EVENT_PREFIX = "@@BRIDGE_EVENT@@";
 
 /**
  * Send parsed CLI args to the renderer over the `cli:apply` channel.
@@ -71,6 +83,34 @@ let stopStatusMonitor = null;
 function sendCliArgsToRenderer(win, args) {
   if (!win || win.isDestroyed()) return;
   win.webContents.send("cli:apply", args);
+}
+
+/** Forward a bridge log line to the renderer's Console Output panel. */
+function sendBridgeLogLine(line) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("bridge:log", line);
+}
+
+/**
+ * Parse and dispatch a structured `@@BRIDGE_EVENT@@`-prefixed stdout line from the bridge
+ * process (see `index.js`). Currently only `hardware:start`/`hardware:stop` (the physical
+ * Start/Stop slot on the Console 1 Fader's status bank) are recognized.
+ * @param {string} jsonText - everything after the `@@BRIDGE_EVENT@@` prefix
+ */
+function handleBridgeEventLine(jsonText) {
+  let event;
+  try {
+    event = JSON.parse(jsonText);
+  } catch {
+    return;
+  }
+  if (!event || typeof event.type !== "string") return;
+
+  if (event.type === "hardware:start" || event.type === "hardware:stop") {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const triggerType = event.type === "hardware:start" ? "start" : "stop";
+    mainWindow.webContents.send("bridge:hardwareTrigger", { type: triggerType });
+  }
 }
 
 /**
@@ -244,6 +284,10 @@ function createWindow() {
     // already present at launch could send its first (only, since the
     // poller only re-sends on change) update before anyone is listening.
     stopStatusMonitor = startStatusMonitor(win);
+    // Same reasoning applies to the bridge process: spawn it once the renderer
+    // has loaded, so its first log lines / hardware-trigger events have a
+    // listener already registered.
+    spawnBridgeProcess();
   });
 
   win.on("closed", () => {
@@ -308,32 +352,26 @@ function stopBridgeGraceful({ reason } = {}) {
 }
 
 /**
- * Spawn the bridge as a child Node process.
+ * Spawn the bridge as a child Node process, into its `standby` lifecycle state (Console 1
+ * Fader MIDI held, no Mixing Station connection yet). No-ops if already spawned — the
+ * process is spawned once and stays alive until the app quits; `bridge:start`/`bridge:stop`
+ * transition its lifecycle state over the existing stdin control channel rather than
+ * spawning/killing it.
  *
  * In dev: runs the project-root `index.js`.
  * In packaged: runs `index.js` from inside the app bundle (so prod deps resolve correctly).
- *
- * @param {BridgeConfig} config
- * @param {(line:string)=>void} sendLogLine
  */
-function startBridge(config, sendLogLine) {
-  if (bridgeProcess) {
-    throw new Error("Bridge is already running");
-  }
-
-  const configPath = writeConfigFile(config);
+function spawnBridgeProcess() {
+  if (bridgeProcess) return;
 
   const spawnCommand = process.execPath;
   const spawnEnv = {
     ...process.env,
-    BRIDGE_CONFIG_PATH: configPath,
     ELECTRON_RUN_AS_NODE: "1",
   };
 
   // Verbose mode: force bridge JSON logging regardless of GUI checkbox.
   if (VERBOSE_TERMINAL) spawnEnv.LOG_JSON = "1";
-
-  // In dev, bridgeEntry is project root index.js; in packaged, it's in Resources.
 
   // Packaged: run the bridge script from inside app.asar so Node's module resolution
   // finds production dependencies (including native modules unpacked by electron-builder).
@@ -348,11 +386,17 @@ function startBridge(config, sendLogLine) {
     cwd: spawnCwd,
     env: spawnEnv,
   });
+  bridgeLifecycleState = "standby";
 
   const onData = (buf) => {
     const text = buf.toString("utf8");
     for (const line of text.split(/\r?\n/)) {
       if (!line) continue;
+
+      if (line.startsWith(BRIDGE_EVENT_PREFIX)) {
+        handleBridgeEventLine(line.slice(BRIDGE_EVENT_PREFIX.length));
+        continue;
+      }
 
       if (VERBOSE_TERMINAL) {
         try {
@@ -362,7 +406,7 @@ function startBridge(config, sendLogLine) {
         }
       }
 
-      sendLogLine(line);
+      sendBridgeLogLine(line);
     }
   };
 
@@ -370,18 +414,10 @@ function startBridge(config, sendLogLine) {
   bridgeProcess.stderr.on("data", onData);
 
   bridgeProcess.on("exit", (code, signal) => {
-    sendLogLine(`Bridge exited (code=${code ?? "?"}, signal=${signal ?? "?"})`);
+    sendBridgeLogLine(`Bridge exited (code=${code ?? "?"}, signal=${signal ?? "?"})`);
     bridgeProcess = null;
+    bridgeLifecycleState = "standby";
   });
-}
-
-function stopBridge() {
-  if (!bridgeProcess) return;
-  try {
-    bridgeProcess.kill();
-  } finally {
-    bridgeProcess = null;
-  }
 }
 
 app.on("second-instance", (_event, argv, _workingDirectory) => {
@@ -439,38 +475,41 @@ app.on("before-quit", (e) => {
     });
 });
 
-ipcMain.handle("bridge:start", async (evt, config) => {
-  const win = BrowserWindow.fromWebContents(evt.sender);
-  if (!win) throw new Error("No window");
-
+ipcMain.handle("bridge:start", async (_evt, config) => {
   const effectiveConfig = VERBOSE_TERMINAL ? { ...(config || {}), logJson: true } : config;
 
-  startBridge(effectiveConfig, (line) => {
-    win.webContents.send("bridge:log", line);
-  });
+  // Defensive fallback: the process is normally already spawned (into standby) by the time
+  // Start can be clicked, but re-spawn if it somehow isn't running (e.g. it crashed).
+  spawnBridgeProcess();
+
+  writeConfigFile(effectiveConfig);
+  sendBridgeControlMessage({ type: "lifecycle:start", config: effectiveConfig });
+  bridgeLifecycleState = "running";
 
   return { ok: true };
 });
 
 ipcMain.handle("bridge:stop", async () => {
-  stopBridge();
+  if (!bridgeProcess) return { ok: true };
+
+  sendBridgeControlMessage({ type: "lifecycle:stop" });
+  bridgeLifecycleState = "standby";
+
   return { ok: true };
 });
 
-ipcMain.handle("bridge:applyConfig", async (evt, config) => {
-  const win = BrowserWindow.fromWebContents(evt.sender);
-  if (!win) throw new Error("No window");
-
+ipcMain.handle("bridge:applyConfig", async (_evt, config) => {
   const effectiveConfig = VERBOSE_TERMINAL ? { ...(config || {}), logJson: true } : config;
 
-  // Always persist config so a restarted bridge (or crash) will come back with the latest settings.
+  // Always persist config so a re-spawned bridge (e.g. after a crash) will come back with
+  // the latest settings.
   writeConfigFile(effectiveConfig);
 
-  if (!bridgeProcess) {
-    startBridge(effectiveConfig, (line) => {
-      win.webContents.send("bridge:log", line);
-    });
-    return { ok: true, started: true };
+  spawnBridgeProcess();
+
+  if (bridgeLifecycleState !== "running") {
+    // Standby doesn't use the Mixing Station config at all — nothing more to do until Start.
+    return { ok: true, started: false };
   }
 
   sendBridgeControlMessage({
@@ -482,7 +521,7 @@ ipcMain.handle("bridge:applyConfig", async (evt, config) => {
 });
 
 ipcMain.handle("bridge:status", async () => {
-  return { running: !!bridgeProcess };
+  return { running: bridgeLifecycleState === "running" };
 });
 
 ipcMain.handle("presets:list", async () => {

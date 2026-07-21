@@ -25,6 +25,12 @@ const WebSocket = require("ws");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const {
+  buildStatusBankSlots,
+  startSlotDisplayFor,
+  hardwareTriggerTypeFor,
+  START_SLOT_OBJECT_ID,
+} = require("./console1StatusBank");
 
 // --- MIDI SysEx constants ---
 const SYSEX_START = 0xf0;
@@ -218,6 +224,9 @@ function fetchAndApplyConsoleInformation(timeoutMs = 500) {
 // Softube color integer encoding: r in LSB, g in next byte, b in MSB.
 let CONSOLE1_MAIN_COLOR = 0x00a5ff; // Orange-ish (r=255,g=165,b=0)
 let CONSOLE1_BUS_COLOR = 0x800080; // Purple (r=128,g=0,b=128)
+// Status/Start bank (bank 0) colors. Not user-configurable (unlike the two above), since
+// this bank's contents are fixed by the feature, not by the user's channel layout.
+const CONSOLE1_STOP_COLOR = 0x0000ff; // Pure red (matches MS_PALETTE_BASE_COLORS[1] "Red")
 
 // Mixing Station color mapping.
 // MS may provide a palette index (0..15), a `styleClass` string, or an already-encoded RGB int.
@@ -674,12 +683,51 @@ function installRuntimeControlChannel() {
       }
 
       if (msg && msg.type === "config:apply") {
-        try {
-          const cfg = msg.config || {};
-          const res = applyRuntimeConfigAndResync(cfg, "config apply");
-          if (LOG_JSON) console.log("[config] apply result", res);
-        } catch (e) {
-          console.warn("[config] Failed to apply config:", e?.message || e);
+        // Standby-leak guard: applyRuntimeConfigAndResync() forces a full resync (creates
+        // and activates real channel tracks), same concern as the RESET/handshake-ack/
+        // open-handler guards elsewhere in this file. The GUI is only supposed to send this
+        // while running, but that's an assumption about the caller, not something this
+        // process can verify — a caller whose own state has drifted (e.g. it optimistically
+        // marked itself "running" before this process actually confirmed it) could still
+        // send one during standby, so guard defensively here too.
+        if (bridgeLifecycle !== "running") {
+          console.warn("[Lifecycle] Ignoring config:apply — not running.");
+        } else {
+          try {
+            const cfg = msg.config || {};
+            const res = applyRuntimeConfigAndResync(cfg, "config apply");
+            if (LOG_JSON) console.log("[config] apply result", res);
+          } catch (e) {
+            console.warn("[config] Failed to apply config:", e?.message || e);
+          }
+        }
+      }
+
+      if (msg && msg.type === "lifecycle:start") {
+        if (!midiInput || !midiOutput) {
+          console.warn(
+            "[Lifecycle] Ignoring lifecycle:start — Console 1 Fader MIDI ports not ready yet."
+          );
+        } else {
+          try {
+            enterRunningState(msg.config || {});
+          } catch (e) {
+            console.warn("[Lifecycle] Failed to enter running state:", e?.message || e);
+          }
+        }
+      }
+
+      if (msg && msg.type === "lifecycle:stop") {
+        if (!midiInput || !midiOutput) {
+          console.warn(
+            "[Lifecycle] Ignoring lifecycle:stop — Console 1 Fader MIDI ports not ready yet."
+          );
+        } else {
+          try {
+            enterStandbyState();
+          } catch (e) {
+            console.warn("[Lifecycle] Failed to enter standby state:", e?.message || e);
+          }
         }
       }
     }
@@ -1333,6 +1381,15 @@ let wsDataSubscriptions = {};
 let osdEnabled = false;
 
 /**
+ * Bridge lifecycle state (distinct from the unrelated "Standard"/"Sends" mode concept
+ * tracked via `setSendsMode`/console logs prefixed `[Mode]` — this one uses `[Lifecycle]`).
+ * - `"standby"`: Console 1 Fader MIDI held, status/Start bank shown, no Mixing Station connection.
+ * - `"running"`: full bridging active (today's original behavior), plus the status/Start bank.
+ * @type {"standby"|"running"}
+ */
+let bridgeLifecycle = "standby";
+
+/**
  * Fast lookup from Console 1 `trackId` to our internal `objectId`.
  * Rebuilt as tracks are (re)created.
  * @type {Map<string, number>}
@@ -1478,8 +1535,11 @@ function subscribeToRequiredChannelData() {
  *   10th fader of the last bus bank
  */
 function rebuildTrackLayout() {
+  // Seed with the fixed status/Start bank (bank 0) — everything below builds on top of it
+  // using `slots.length` as the running objectId counter, so this single seed line is what
+  // shifts all real input/bus/main banks back by one bank.
   /** @type {TrackLayoutSlot[]} */
-  const slots = [];
+  const slots = buildStatusBankSlots();
 
   // Build ordered input tracks (mono or grouped stereo) and then append remaining inputs.
   /** @type {Set<number>} */
@@ -1665,15 +1725,8 @@ function openSoftubeMidiInput(preferredNames = ["Console 1 Fader Mk III DAW"]) {
   throw new Error("Console 1 Fader Mk III MIDI port not found!");
 }
 
-// Open MIDI input port for Softube Console 1
-const midiInput = (() => {
-  try {
-    return openSoftubeMidiInput();
-  } catch (e) {
-    console.error(e.message);
-    process.exit(1);
-  }
-})();
+/** @type {import('@julusian/midi').Input | null} */
+let midiInput = null;
 
 /**
  * Finds and opens the first MIDI output port matching Console 1 Fader Mk III DAW or MIDI.
@@ -1697,15 +1750,56 @@ function openSoftubeMidiOutput(preferredNames = ["Console 1 Fader Mk III DAW"]) 
   throw new Error("Console 1 Fader Mk III MIDI output port not found!");
 }
 
-// Open MIDI output port for Softube Console 1
-const midiOutput = (() => {
-  try {
-    return openSoftubeMidiOutput();
-  } catch (e) {
-    console.error(e.message);
-    process.exit(1);
+/** @type {import('@julusian/midi').Output | null} */
+let midiOutput = null;
+
+const MIDI_PORT_RETRY_INTERVAL_MS = 2000;
+
+/**
+ * Try to open both Console 1 Fader MIDI ports once.
+ * @returns {boolean} true if both ports are now open
+ */
+function tryOpenConsole1MidiPorts() {
+  if (!midiInput) {
+    try {
+      midiInput = openSoftubeMidiInput();
+    } catch {
+      // not found yet; keep retrying
+    }
   }
-})();
+  if (!midiOutput) {
+    try {
+      midiOutput = openSoftubeMidiOutput();
+    } catch {
+      // not found yet; keep retrying
+    }
+  }
+  return !!midiInput && !!midiOutput;
+}
+
+/**
+ * Wait (retrying every `MIDI_PORT_RETRY_INTERVAL_MS`) until both Console 1 Fader MIDI ports
+ * are found and opened. Unlike the bridge's original behavior, this never exits the
+ * process — the GUI now spawns this process before the user has necessarily connected the
+ * Console 1 Fader.
+ * @returns {Promise<void>}
+ */
+function waitForConsole1MidiPorts() {
+  return new Promise((resolve) => {
+    if (tryOpenConsole1MidiPorts()) {
+      resolve();
+      return;
+    }
+    console.log("Waiting for Console 1 Fader MIDI ports...");
+    const timer = setInterval(() => {
+      if (tryOpenConsole1MidiPorts()) {
+        clearInterval(timer);
+        console.log("Console 1 Fader MIDI ports found.");
+        resolve();
+      }
+    }, MIDI_PORT_RETRY_INTERVAL_MS);
+  });
+}
 
 // --- Mixing Station WebSocket connection ---
 let msWebSocket;
@@ -1758,10 +1852,20 @@ function createDefaultTrackForSlot(objectId) {
   const kind = slot ? slot.kind : "empty";
   let isActive = true;
   let color = 6842214;
-  const name = getDefaultNameForObjectId(objectId);
+  let name = getDefaultNameForObjectId(objectId);
   if (kind === "bus") color = CONSOLE1_BUS_COLOR;
   else if (kind === "main") color = CONSOLE1_MAIN_COLOR;
   else if (kind === "empty") isActive = false;
+  else if (kind === "status") {
+    name = slot.statusLabel || "";
+    // B1: fixed placeholder color. Milestone B2 wires this to Feature A's live
+    // MIDI/process detection data instead.
+    color = CONSOLE1_STOP_COLOR;
+  } else if (kind === "start") {
+    const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_MAIN_COLOR, CONSOLE1_STOP_COLOR);
+    name = display.name;
+    color = display.color;
+  }
 
   return {
     track: objectId + 1,
@@ -1857,6 +1961,116 @@ function getOrCreateTrackInfo(objectId) {
   return (
     tracksByObjectId[objectId] || (tracksByObjectId[objectId] = createDefaultTrackForSlot(objectId))
   );
+}
+
+/**
+ * Push the Start slot's current name/color (per `bridgeLifecycle`) to Console 1. Creates the
+ * track on demand if it doesn't exist yet. No-ops if nothing actually changed.
+ */
+function applyStartSlotDisplay() {
+  const track = getOrCreateTrackInfo(START_SLOT_OBJECT_ID);
+  const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_MAIN_COLOR, CONSOLE1_STOP_COLOR);
+  /** @type {Record<string, any>} */
+  const partial = {};
+  if (track.name !== display.name) {
+    track.name = display.name;
+    partial.name = display.name;
+  }
+  if (track.color !== display.color) {
+    track.color = display.color;
+    partial.color = display.color;
+  }
+  if (Object.keys(partial).length > 0) queueConsole1TrackUpdate(track.trackId, partial);
+}
+
+/**
+ * Send just the status/Start bank (bank 0) tracks — creating any not-yet-cached ones first.
+ * Used when entering standby, where the real channel banks aren't relevant.
+ * @param {boolean} [forceSend=false]
+ */
+function sendStatusBankTracks(forceSend = false) {
+  /** @type {any[]} */
+  const batch = [];
+  for (let objectId = 0; objectId < START_SLOT_OBJECT_ID + 1; objectId++) {
+    batch.push(getOrCreateTrackInfo(objectId));
+  }
+  sendSysexToConsole1({ trackBatch: batch }, forceSend);
+}
+
+/**
+ * Deactivate all non-status/start tracks (the real input/bus/main channels), leaving the
+ * status/Start bank visible. Used when entering standby — unlike the full
+ * `batchDeactivateAllTracks()` used at true process shutdown, this keeps bank 0 alive.
+ * @param {boolean} [forceSend=false]
+ */
+function deactivateRealChannelTracks(forceSend = false) {
+  const keys = Object.keys(tracksByObjectId);
+  /** @type {{trackId: string, isActive: boolean}[]} */
+  let batch = [];
+
+  for (const key of keys) {
+    const objectId = parseInt(key, 10);
+    const slot = trackLayout[objectId];
+    if (slot && (slot.kind === "status" || slot.kind === "start")) continue;
+
+    const track = tracksByObjectId[key];
+    if (!track || track.trackId === undefined || track.trackId === null) continue;
+    batch.push({ trackId: track.trackId, isActive: false });
+    if (batch.length >= 100) {
+      sendSysexToConsole1({ trackBatch: batch }, forceSend);
+      batch = [];
+    }
+  }
+
+  if (batch.length > 0) {
+    sendSysexToConsole1({ trackBatch: batch }, forceSend);
+  }
+}
+
+/**
+ * Enter `standby`: disconnect from Mixing Station (if connected), deactivate the real
+ * channel banks' display, and show "Start"/`CONSOLE1_MAIN_COLOR` on the Start slot. The
+ * status/Start bank itself stays visible throughout — this is also used as the bridge's
+ * initial state at process start.
+ */
+function enterStandbyState() {
+  // Set before closing the socket: the WS "close" handler below reads this to decide
+  // whether to schedule its usual auto-reconnect, and that event fires asynchronously —
+  // this must already read "standby" by the time it does.
+  bridgeLifecycle = "standby";
+  console.log("[Lifecycle] standby");
+
+  if (
+    msWebSocket &&
+    (msWebSocket.readyState === WebSocket.OPEN || msWebSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    msWebSocket.close();
+  }
+  if (wsReconnectTimeout) {
+    clearTimeout(wsReconnectTimeout);
+    wsReconnectTimeout = null;
+  }
+
+  deactivateRealChannelTracks(true);
+  sendStatusBankTracks(true);
+  applyStartSlotDisplay();
+}
+
+/**
+ * Enter `running`: apply the given config, connect to Mixing Station, rebuild the full
+ * track layout (status bank + real channel banks), and show "Stop"/`CONSOLE1_STOP_COLOR` on
+ * the Start slot.
+ * @param {BridgeConfig} config
+ */
+function enterRunningState(config) {
+  bridgeLifecycle = "running";
+  console.log("[Lifecycle] running");
+
+  applyRuntimeConfig(config || {});
+  rebuildTrackLayout();
+  forceConsole1FullResync("lifecycle:start");
+  connectMixingStationWebSocket();
+  applyStartSlotDisplay();
 }
 
 /**
@@ -2166,6 +2380,20 @@ function connectMixingStationWebSocket() {
       // ignore
     }
 
+    // Standby may have been entered while this await was in flight (e.g. Start then Stop
+    // within the ~600ms console-information round trip). Same standby-leak concern as the
+    // other guards in this file: resetting init state / scheduling finalizeInitialization
+    // below would re-activate real channel tracks during standby. Bail out and let the
+    // (already-triggered) close handle teardown.
+    if (bridgeLifecycle !== "running") {
+      try {
+        msWebSocket.close();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
     // Reset init state on each connect/reconnect.
     rebuildTrackLayout();
     isInitializing = true;
@@ -2205,19 +2433,29 @@ function connectMixingStationWebSocket() {
   });
 
   msWebSocket.on("close", () => {
-    const delay = 2000; // fixed 2 seconds
-    console.warn(`Mixing Station WebSocket closed, reconnecting in ${delay / 1000}s...`);
-    if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
-    wsReconnectTimeout = setTimeout(connectMixingStationWebSocket, delay);
     if (wsHeartbeatInterval) {
       clearInterval(wsHeartbeatInterval);
       wsHeartbeatInterval = null;
     }
-
+    // Clear regardless of branch below: a pending init-flush timeout left over from a very
+    // recent connect (e.g. rapid Start-then-Stop) must not fire during standby — it would
+    // force-send a stale full track dump via `finalizeInitialization()`.
     if (initFlushTimeoutId) {
       clearTimeout(initFlushTimeoutId);
       initFlushTimeoutId = null;
     }
+
+    // Standby intentionally closes this socket (see enterStandbyState) — don't schedule
+    // the usual auto-reconnect in that case, or standby would silently reconnect ~2s later.
+    if (bridgeLifecycle !== "running") {
+      console.log("Mixing Station WebSocket closed (standby, not reconnecting).");
+      return;
+    }
+
+    const delay = 2000; // fixed 2 seconds
+    console.warn(`Mixing Station WebSocket closed, reconnecting in ${delay / 1000}s...`);
+    if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
+    wsReconnectTimeout = setTimeout(connectMixingStationWebSocket, delay);
   });
 
   msWebSocket.on("error", (err) => {
@@ -2287,7 +2525,9 @@ function sendSysexToConsole1(jsonObj, forceSend = false) {
       console.log("Sending SysEx JSON to Console 1:", jsonObj);
       console.log("SysEx data:", Buffer.from(data).toString("hex"));
     }
-    midiOutput.sendMessage(data);
+    // Ports are opened lazily now (see waitForConsole1MidiPorts) and may still be null,
+    // e.g. during a SIGINT shutdown that arrives before the Console 1 Fader was ever found.
+    if (midiOutput) midiOutput.sendMessage(data);
   }
 }
 
@@ -2405,7 +2645,16 @@ function handleConsole1ControlJson(parsed) {
       // Re-send handshake, then force a full track dump.
       disableOSD();
       startHandshake();
-      scheduleConsole1FullResync("console reset");
+      if (bridgeLifecycle === "running") {
+        scheduleConsole1FullResync("console reset");
+      } else {
+        // In standby there's no Mixing Station data to resync, and `finalizeInitialization()`
+        // (which `scheduleConsole1FullResync` schedules) would otherwise create AND activate
+        // default tracks for every real channel slot in `trackLayout`, undoing standby's
+        // deactivation. Just re-affirm the status/Start bank instead.
+        sendStatusBankTracks(true);
+        applyStartSlotDisplay();
+      }
       return;
     }
     if (parsed.cmd === "ENABLE") {
@@ -2421,7 +2670,11 @@ function handleConsole1ControlJson(parsed) {
     if (parsed.handshake && parsed.handshake.ack === true) {
       enableOSD();
       // If init hasn't completed yet, allow it to complete naturally; otherwise force a dump.
-      if (!hasSentInitialTrackDump) {
+      // Same standby-leak concern as the RESET branch above: finalizeInitialization() would
+      // activate every real channel slot, so only do this while actually running. This path
+      // is reachable during standby because the RESET branch's startHandshake() solicits
+      // this very ack.
+      if (!hasSentInitialTrackDump && bridgeLifecycle === "running") {
         finalizeInitialization("handshake ack");
       }
     }
@@ -2766,6 +3019,13 @@ function applyChannelUpdateToSlot(args) {
  * @param {string|Buffer|ArrayBuffer} data - The raw WebSocket message payload.
  */
 function handleWSMessage(data) {
+  // Standby closes the WS, but close() is async — a message already in flight (or queued
+  // in the event loop) can still arrive after enterStandbyState() has run. Processing it
+  // could re-trigger finalizeInitialization() (via bufferInitUpdate's early-finalize path)
+  // and re-activate/dump the real channel tracks standby just deactivated. Same bug class
+  // as the RESET/handshake-ack/close-handler guards above; this is the WS-message entry
+  // point they all ultimately fed through.
+  if (bridgeLifecycle !== "running") return;
   try {
     const msg = JSON.parse(coerceWsPayloadToText(data));
     if (!msg || typeof msg.path !== "string") return;
@@ -3281,6 +3541,21 @@ function resolveMidiTrackContext(parsed) {
 }
 
 /**
+ * Handle an incoming Console 1 MIDI message for a status/Start bank slot (bank 0). These
+ * slots have no Mixing Station channel, so no MS writes are ever produced here — only the
+ * Start slot's `selected` field is meaningful, as the hardware Start/Stop trigger.
+ * @param {any} parsed
+ * @param {TrackLayoutSlot} slot
+ */
+function handleStatusOrStartSlotMidiMessage(parsed, slot) {
+  if (slot.kind !== "start") return;
+  const triggerType = hardwareTriggerTypeFor(bridgeLifecycle, parsed.selected);
+  if (!triggerType) return;
+  console.log(`[Lifecycle] hardware trigger: ${triggerType}`);
+  process.stdout.write(`@@BRIDGE_EVENT@@${JSON.stringify({ type: `hardware:${triggerType}` })}\n`);
+}
+
+/**
  * Handles incoming MIDI messages, specifically SysEx JSON messages, and processes them
  * according to their type. Delegates control messages to `handleConsole1ControlJson`,
  * and for track-related messages, updates volume, mute, solo, pan, selection, and send slots.
@@ -3302,6 +3577,20 @@ function handleMidiMessage(deltaTime, message) {
   }
 
   if (!parsed.trackId) return;
+
+  // Status/Start bank slots aren't backed by any Mixing Station channel — handle them
+  // separately, before the normal MS-channel-driven dispatch below (which assumes a real
+  // `msPrimary` and would otherwise silently drop these via `resolveMidiTrackContext`'s
+  // `msPrimary !== null` guard).
+  const earlyObjectId = getObjectIdForTrackId(parsed.trackId);
+  if (Number.isInteger(earlyObjectId)) {
+    const earlySlot = trackLayout[earlyObjectId];
+    if (earlySlot && (earlySlot.kind === "status" || earlySlot.kind === "start")) {
+      handleStatusOrStartSlotMidiMessage(parsed, earlySlot);
+      return;
+    }
+  }
+
   const ctx = resolveMidiTrackContext(parsed);
   if (!ctx) return;
   const { slot, primaryChannel, track } = ctx;
@@ -3324,13 +3613,13 @@ function handleMidiMessage(deltaTime, message) {
 /**
  * Main MIDI input event handler. Only processes SysEx messages.
  */
-midiInput.on("message", (deltaTime, message) => {
+function onConsole1MidiInputMessage(deltaTime, message) {
   if (LOG_JSON) console.log("Received MIDI message:", message);
   // Only handle SysEx messages (start with 0xF0)
   if (Array.isArray(message) && message[0] === SYSEX_START) {
     handleMidiMessage(deltaTime, message);
   }
-});
+}
 
 /**
  * Sets up handlers for graceful application shutdown on SIGINT (CTRL+C) and SIGTERM signals.
@@ -3396,12 +3685,18 @@ function setupShutdownHandler() {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-function main() {
+async function startBridgeProcess() {
   setupShutdownHandler();
-  // Build initial track layout early so any Console 1 traffic can be mapped.
+  await waitForConsole1MidiPorts();
+  midiInput.on("message", onConsole1MidiInputMessage);
+
+  // Build initial track layout early so any Console 1 traffic can be mapped, then enter
+  // standby — the process starts in standby and stays there until a `lifecycle:start`
+  // stdin message (from the GUI's Start button, CLI flag, or the hardware Start slot).
   rebuildTrackLayout();
-  connectMixingStationWebSocket();
-  console.log("Softube-MS-Bridge running. Press CTRL+C to exit.");
+  enterStandbyState();
+
+  console.log("Softube-MS-Bridge running (standby). Press CTRL+C to exit.");
 }
 
-main();
+startBridgeProcess();

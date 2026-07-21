@@ -152,6 +152,20 @@ When the mode changes, the bridge logs it:
 The bridge supports Console 1 meter requests (`activeMeters`) using Mixing Station `metering2`.
 It converts dB values into Console 1’s expected 0..1 peak-like meter value.
 
+## Bridge lifecycle (GUI mode)
+
+When run via the GUI, the bridge process is spawned once when the GUI launches and stays alive
+(holding the Console 1 Fader MIDI connection) until the GUI quits — it no longer restarts on every
+Start/Stop. Start/Stop instead toggle between two states:
+
+- **Standby**: Console 1 Fader connected, a fixed status bank (bank 0) shown on the fader, no
+  Mixing Station connection.
+- **Running**: full bridging active, plus the status bank continues to be shown.
+
+The status bank's 10th slot doubles as a physical Start/Stop button — pressing it while in standby
+starts the bridge (using whatever preset is currently loaded in the GUI), pressing it while running
+stops it. It shows "Start" (orange) or "Stop" (red) accordingly.
+
 ## Shutdown behavior
 
 On `SIGINT`/`SIGTERM` (Ctrl+C):
@@ -184,3 +198,17 @@ On `SIGINT`/`SIGTERM` (Ctrl+C):
     your system actually reports. Check the exact MIDI port name in Audio MIDI Setup, or the exact
     process name via `ps -Ao args= | grep -i <app name>`, and adjust the corresponding string in
     `computeStatus()`.
+
+- The status/Start bank never appears on the physical Console1 Fader:
+  - Check the GUI's log panel for `[Lifecycle]`-prefixed lines confirming the bridge found the
+    Console 1 Fader port — if it's still logged as waiting, the port isn't being detected (see the
+    "MIDI port not found" entry above).
+
+- Pressing the hardware Start/Stop slot does nothing:
+  - Confirm the GUI window is open (the bridge process only exists while the GUI is running).
+  - If you click Start (or press the hardware slot) within a second or two of launching the app,
+    the bridge may not have found the Console 1 Fader yet — the GUI's status badge can briefly show
+    "Running" even though the bridge itself logged an "Ignoring lifecycle:start" warning and stayed
+    in standby. Wait for the Console 1 Fader's status bank to appear before pressing Start. The same
+    applies if the bridge process ever crashes and gets re-spawned: the very next Start click can
+    race the fresh process's MIDI detection the same way.
