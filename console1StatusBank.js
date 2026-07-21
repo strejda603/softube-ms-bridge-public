@@ -103,6 +103,24 @@ function hardwareTriggerTypeFor(lifecycle, selectedValue) {
   return lifecycle === "running" ? "stop" : "start";
 }
 
+/**
+ * On/off color for a status indicator slot, given a boolean (or boolean-ish) value from a
+ * live status snapshot. Only literal `true` counts as "on" — same strict-equality convention
+ * as `hardwareTriggerTypeFor`, so a missing/malformed status field defaults to "off" rather
+ * than throwing or needing special-casing by the caller.
+ *
+ * @param {any} isOn - e.g. `status.ipad` from a live status snapshot
+ * @param {number} onColor
+ * @param {number} offColor
+ * @returns {number}
+ * @example
+ * statusSlotColorFor(true, 0x00ff00, 0x0000ff); // 0x00ff00
+ * statusSlotColorFor(undefined, 0x00ff00, 0x0000ff); // 0x0000ff
+ */
+function statusSlotColorFor(isOn, onColor, offColor) {
+  return isOn === true ? onColor : offColor;
+}
+
 module.exports = {
   STATUS_BANK_INDICATORS,
   STATUS_BANK_SIZE,
@@ -110,4 +128,5 @@ module.exports = {
   buildStatusBankSlots,
   startSlotDisplayFor,
   hardwareTriggerTypeFor,
+  statusSlotColorFor,
 };

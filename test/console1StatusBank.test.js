@@ -7,6 +7,7 @@ const {
   buildStatusBankSlots,
   startSlotDisplayFor,
   hardwareTriggerTypeFor,
+  statusSlotColorFor,
 } = require("../console1StatusBank");
 
 test("STATUS_BANK_SIZE and START_SLOT_OBJECT_ID are consistent", () => {
@@ -92,4 +93,22 @@ test("buildStatusBankSlots: the built start slot's objectId matches START_SLOT_O
   const startSlot = slots.find((s) => s.kind === "start");
   assert.equal(startSlot.objectId, START_SLOT_OBJECT_ID);
   assert.ok(STATUS_BANK_INDICATORS.length <= STATUS_BANK_SIZE - 1);
+});
+
+test("statusSlotColorFor: true means on color", () => {
+  assert.equal(statusSlotColorFor(true, 0x00ff00, 0x0000ff), 0x00ff00);
+});
+
+test("statusSlotColorFor: false means off color", () => {
+  assert.equal(statusSlotColorFor(false, 0x00ff00, 0x0000ff), 0x0000ff);
+});
+
+test("statusSlotColorFor: undefined (missing status key) means off color", () => {
+  assert.equal(statusSlotColorFor(undefined, 0x00ff00, 0x0000ff), 0x0000ff);
+});
+
+test("statusSlotColorFor: any non-true value means off color, not just false/undefined", () => {
+  assert.equal(statusSlotColorFor(1, 0x00ff00, 0x0000ff), 0x0000ff);
+  assert.equal(statusSlotColorFor("true", 0x00ff00, 0x0000ff), 0x0000ff);
+  assert.equal(statusSlotColorFor(null, 0x00ff00, 0x0000ff), 0x0000ff);
 });
