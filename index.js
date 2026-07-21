@@ -2994,6 +2994,13 @@ function applyChannelUpdateToSlot(args) {
  * @param {string|Buffer|ArrayBuffer} data - The raw WebSocket message payload.
  */
 function handleWSMessage(data) {
+  // Standby closes the WS, but close() is async — a message already in flight (or queued
+  // in the event loop) can still arrive after enterStandbyState() has run. Processing it
+  // could re-trigger finalizeInitialization() (via bufferInitUpdate's early-finalize path)
+  // and re-activate/dump the real channel tracks standby just deactivated. Same bug class
+  // as the RESET/handshake-ack/close-handler guards above; this is the WS-message entry
+  // point they all ultimately fed through.
+  if (bridgeLifecycle !== "running") return;
   try {
     const msg = JSON.parse(coerceWsPayloadToText(data));
     if (!msg || typeof msg.path !== "string") return;
