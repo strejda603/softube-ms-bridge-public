@@ -3393,11 +3393,12 @@ function resolveMidiTrackContext(parsed) {
  * trackId alone was NOT enough on real hardware (confirmed by testing) — Console 1 appears to
  * track "currently selected object" as its own internal, mutually-exclusive latch that only
  * moves when a *different* object gets selected, not from a background field update to the
- * already-selected one. So in addition to echoing `selected:false` here, force-select the
- * always-empty spacer slot right before Start (`START_SLOT_OBJECT_ID - 1`, guaranteed empty by
- * `buildStatusBankSlots()`) — this reproduces the "select a different track" workaround that's
- * confirmed to un-latch it, and is harmless to leave selected since nothing reacts to an empty
- * slot's `selected` field.
+ * already-selected one. So in addition to echoing `selected:false` here, force-select a
+ * neighboring slot to reproduce the "select a different track" workaround that's confirmed
+ * to un-latch it. Must be an ACTIVE slot — the empty spacer right before Start
+ * (`isActive:false`, see `createDefaultTrackForSlot`) can't be selected on real hardware
+ * (confirmed by testing: targeting it did not fix the latch), so this targets
+ * `START_SLOT_OBJECT_ID - 2`, the last status indicator slot (always active), instead.
  *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
@@ -3413,9 +3414,9 @@ function handleStatusOrStartSlotMidiMessage(parsed, slot) {
   track.selected = false;
   queueConsole1TrackUpdate(track.trackId, { selected: false }, { forceSend: true });
 
-  const spacerTrack = getOrCreateTrackInfo(START_SLOT_OBJECT_ID - 1);
-  spacerTrack.selected = true;
-  queueConsole1TrackUpdate(spacerTrack.trackId, { selected: true }, { forceSend: true });
+  const neighborTrack = getOrCreateTrackInfo(START_SLOT_OBJECT_ID - 2);
+  neighborTrack.selected = true;
+  queueConsole1TrackUpdate(neighborTrack.trackId, { selected: true }, { forceSend: true });
 }
 
 /**
