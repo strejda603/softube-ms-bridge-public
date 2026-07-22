@@ -567,10 +567,13 @@ function applyRuntimeConfigAndResync(cfg, reason = "config apply") {
   // Otherwise: rebuild layout and force a full Console 1 re-sync so names/colors/mappings refresh.
   rebuildTrackLayout();
 
-  // Reset per-track caches so we don't keep stale layout-derived objects.
-  tracksByObjectId = {};
+  // Reset per-track caches so we don't keep stale layout-derived objects. The status/Start
+  // bank (objectId 0..START_SLOT_OBJECT_ID) is preserved — see resetRealChannelTrackCache().
+  resetRealChannelTrackCache();
   objectIdByTrackId = new Map();
-  trackIdByObjectId.clear();
+  for (const objectId of trackIdByObjectId.keys()) {
+    if (objectId > START_SLOT_OBJECT_ID) trackIdByObjectId.delete(objectId);
+  }
   // Intentionally do NOT clear `usedTrackIds`: this prevents accidental trackId reuse
   // across live rebuilds within the same process.
   meteredObjectIds = new Set();
@@ -1723,6 +1726,28 @@ function getOrCreateTrackInfo(objectId) {
 }
 
 /**
+ * Reset the per-track cache for real channel slots (input/bus/main) only, preserving the
+ * status/Start bank's cached tracks (objectId 0..START_SLOT_OBJECT_ID).
+ *
+ * The status/Start bank's colors are driven by `applyLiveStatusColors()`/
+ * `applyStartSlotDisplay()` independently of the Mixing Station connection — wiping the whole
+ * `tracksByObjectId` cache on every MS (re)connect reset those slots to their `createDefaultTrackForSlot`
+ * default (status = off/red) until the next status tick or lifecycle change repopulated them,
+ * causing a visible red flash on every Start/live-config-apply.
+ *
+ * @example
+ * resetRealChannelTrackCache(); // tracksByObjectId now only has objectId 0..9
+ */
+function resetRealChannelTrackCache() {
+  /** @type {Record<number, TrackInfo>} */
+  const preserved = {};
+  for (let objectId = 0; objectId <= START_SLOT_OBJECT_ID; objectId++) {
+    if (tracksByObjectId[objectId]) preserved[objectId] = tracksByObjectId[objectId];
+  }
+  tracksByObjectId = preserved;
+}
+
+/**
  * Update the 7 status indicator slots' colors from a live status snapshot (Feature A's
  * `computeStatus()` shape, forwarded from the GUI via `status:update`). Applies regardless
  * of lifecycle state — this only touches per-slot cached track objects (creating them on
@@ -2226,11 +2251,12 @@ function connectMixingStationWebSocket() {
       return;
     }
 
-    // Reset init state on each connect/reconnect.
+    // Reset init state on each connect/reconnect. The status/Start bank (objectId
+    // 0..START_SLOT_OBJECT_ID) is preserved — see resetRealChannelTrackCache().
     rebuildTrackLayout();
     isInitializing = true;
     initMessageBuffer = [];
-    tracksByObjectId = {};
+    resetRealChannelTrackCache();
     meteredObjectIds = new Set();
     metering2ParamMsChannels = [];
     msChannelMeterDb.clear();
@@ -3363,10 +3389,15 @@ function resolveMidiTrackContext(parsed) {
  * For a normal track, Console 1's `selected` state gets cleared back to `false` indirectly,
  * via Mixing Station echoing `ch.N.selected=false` back over the WS once another channel is
  * selected (see `handleMidiSelectedUpdate`). The Start slot has no MS channel backing it, so
- * nothing would ever clear it the same way — left alone, Console 1 would consider it
- * permanently "selected" after the first press and stop sending a fresh `selected:true` on
- * subsequent presses. Echo `selected:false` back immediately after handling the trigger so
- * the next physical press is a fresh rising edge.
+ * nothing would ever clear it the same way. Pushing `selected:false` for the Start slot's own
+ * trackId alone was NOT enough on real hardware (confirmed by testing) — Console 1 appears to
+ * track "currently selected object" as its own internal, mutually-exclusive latch that only
+ * moves when a *different* object gets selected, not from a background field update to the
+ * already-selected one. So in addition to echoing `selected:false` here, force-select the
+ * always-empty spacer slot right before Start (`START_SLOT_OBJECT_ID - 1`, guaranteed empty by
+ * `buildStatusBankSlots()`) — this reproduces the "select a different track" workaround that's
+ * confirmed to un-latch it, and is harmless to leave selected since nothing reacts to an empty
+ * slot's `selected` field.
  *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
@@ -3381,6 +3412,10 @@ function handleStatusOrStartSlotMidiMessage(parsed, slot) {
   const track = getOrCreateTrackInfo(slot.objectId);
   track.selected = false;
   queueConsole1TrackUpdate(track.trackId, { selected: false }, { forceSend: true });
+
+  const spacerTrack = getOrCreateTrackInfo(START_SLOT_OBJECT_ID - 1);
+  spacerTrack.selected = true;
+  queueConsole1TrackUpdate(spacerTrack.trackId, { selected: true }, { forceSend: true });
 }
 
 /**
