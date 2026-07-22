@@ -32,6 +32,18 @@ const {
   statusSlotColorFor,
   START_SLOT_OBJECT_ID,
 } = require("./console1StatusBank");
+const { msColorToSoftubeColorInt } = require("./midiColorUtils");
+const { clamp01, hybridStereoPanToDualMonoPans } = require("./panUtils");
+const { decodeMetering2Binary, dbToConsole1MeterNorm } = require("./meteringUtils");
+const {
+  isNonEmptyString,
+  resolveNextBooleanFromMomentary,
+  isNegativeInfinityDb,
+  normalizeConsole1LevelForMs,
+  trimStereoSuffixFromName,
+  coerceConsole1NumericString,
+  coerceWsPayloadToText,
+} = require("./valueCoercion");
 
 // --- MIDI SysEx constants ---
 const SYSEX_START = 0xf0;
@@ -235,86 +247,8 @@ const CONSOLE1_START_COLOR = 0x00a5ff; // Same value as CONSOLE1_MAIN_COLOR toda
 const CONSOLE1_STATUS_ON_COLOR = 0x00ff00; // Pure green (matches MS_PALETTE_BASE_COLORS[2] "Green")
 const CONSOLE1_STATUS_OFF_COLOR = 0x0000ff; // Pure red — same value as CONSOLE1_STOP_COLOR, distinct constant
 
-// Mixing Station color mapping.
-// MS may provide a palette index (0..15), a `styleClass` string, or an already-encoded RGB int.
-// We normalize these into Softube's 24-bit integer format: r in LSB, g in next byte, b in MSB.
-const MS_PALETTE_BASE_COLORS = [
-  0x000000, // Black
-  0x0000ff, // Red
-  0x00ff00, // Green
-  0x00ffff, // Yellow
-  0xff0000, // Blue
-  0xff00ff, // Magenta
-  0xffff00, // Cyan
-  0xffffff, // White
-];
-
-const MS_STYLECLASS_TO_PALETTE_INDEX = {
-  "mixer-black": 0,
-  "mixer-red": 1,
-  "mixer-green": 2,
-  "mixer-yellow": 3,
-  "mixer-blue": 4,
-  "mixer-magenta": 5,
-  "mixer-cyan": 6,
-  "mixer-white": 7,
-  "mixer-black-inv": 8,
-  "mixer-red-inv": 9,
-  "mixer-green-inv": 10,
-  "mixer-yellow-inv": 11,
-  "mixer-blue-inv": 12,
-  "mixer-magenta-inv": 13,
-  "mixer-cyan-inv": 14,
-  "mixer-white-inv": 15,
-};
-
-/**
- * Lighten a Softube 24-bit color by blending towards white.
- *
- * Softube color format is 0xBBGGRR (red in LSB).
- *
- * @param {number} colorInt - 24-bit color int
- * @param {number} amount01 - 0..1 blend amount
- * @returns {number} 24-bit color int
- * @example
- * tintSoftubeColor(0x0000ff, 0.6); // lighter red
- */
-function tintSoftubeColor(colorInt, amount01) {
-  const r = colorInt & 0xff;
-  const g = (colorInt >> 8) & 0xff;
-  const b = (colorInt >> 16) & 0xff;
-  const lr = Math.round(r + (255 - r) * amount01);
-  const lg = Math.round(g + (255 - g) * amount01);
-  const lb = Math.round(b + (255 - b) * amount01);
-  return (lr & 0xff) | ((lg & 0xff) << 8) | ((lb & 0xff) << 16);
-}
-
-/**
- * Convert a Mixing Station color value (palette index, style class, or RGB int) into Softube's 24-bit int.
- *
- * @param {number|string} value
- * @returns {number|undefined}
- */
-function msColorToSoftubeColorInt(value) {
-  let colorInt = undefined;
-  if (typeof value === "number") {
-    if (value >= 0 && value <= 15) {
-      const idx = value;
-      const base = MS_PALETTE_BASE_COLORS[idx % 8];
-      // For "inv" colors use a lighter tint for readability (instead of true inversion).
-      colorInt = idx < 8 ? base : tintSoftubeColor(base, 0.6);
-    } else if (value >= 0 && value <= 0xffffff) {
-      colorInt = value;
-    }
-  } else if (typeof value === "string") {
-    const idx = MS_STYLECLASS_TO_PALETTE_INDEX[value];
-    if (idx !== undefined) {
-      const base = MS_PALETTE_BASE_COLORS[idx % 8];
-      colorInt = idx < 8 ? base : tintSoftubeColor(base, 0.6);
-    }
-  }
-  return typeof colorInt === "number" ? colorInt : undefined;
-}
+// Mixing Station color mapping (palette index / styleClass / RGB int -> Softube 24-bit int)
+// lives in `midiColorUtils.js` (pure, unit-tested) and is imported above.
 
 // Console 1 -> Mixing Station send mapping.
 // Console 1 exposes only 6 sends, while the mixer can have 16 buses.
@@ -366,6 +300,14 @@ let C1_SEND_TO_MS_SEND_INDEX = [];
 /** @type {Map<number, number>} */
 let MS_SEND_INDEX_TO_C1_SLOT = new Map();
 
+/**
+ * Rebuild and apply the Console 1 <-> Mixing Station send mapping from the current
+ * `C1_SEND_TO_MS_BUS_NUMBER` config, replacing `C1_SEND_TO_MS_SEND_INDEX` and
+ * `MS_SEND_INDEX_TO_C1_SLOT` in place.
+ * @example
+ * C1_SEND_TO_MS_BUS_NUMBER = [1, 2, 3, 7, 9, 13];
+ * rebuildSendMapping();
+ */
 function rebuildSendMapping() {
   const { c1ToMsSendIndex, msSendIndexToC1Slot } = buildSendMapping();
   C1_SEND_TO_MS_SEND_INDEX = c1ToMsSendIndex;
@@ -419,11 +361,6 @@ let BUS_TRACK_ORDER = [];
  * @property {number} [console1MainColor]
  * @property {number} [console1BusColor]
  */
-
-/** @param {any} v @returns {v is string} */
-function isNonEmptyString(v) {
-  return typeof v === "string" && v.trim().length > 0;
-}
 
 /**
  * Load bridge configuration from JSON file and environment variables.
@@ -543,8 +480,8 @@ function stableConfigKeyFromRuntime() {
     c1SendToMsBusNumber: Array.isArray(C1_SEND_TO_MS_BUS_NUMBER)
       ? C1_SEND_TO_MS_BUS_NUMBER
       : [1, 2, 3, 4, 5, 6],
-    console1MainColor: typeof CONSOLE1_MAIN_COLOR === "number" ? CONSOLE1_MAIN_COLOR : 42495,
-    console1BusColor: typeof CONSOLE1_BUS_COLOR === "number" ? CONSOLE1_BUS_COLOR : 8388736,
+    console1MainColor: typeof CONSOLE1_MAIN_COLOR === "number" ? CONSOLE1_MAIN_COLOR : 0x00a5ff,
+    console1BusColor: typeof CONSOLE1_BUS_COLOR === "number" ? CONSOLE1_BUS_COLOR : 0x800080,
   });
 }
 
@@ -807,22 +744,6 @@ const inputStdState = new Map();
 let inputSendState = new Map();
 
 /**
- * Console 1 sometimes sends momentary button events (often always `true`) instead of the final state.
- *
- * Heuristic: if incoming equals current, treat it as a toggle.
- *
- * @param {boolean} current
- * @param {boolean} incoming
- * @returns {boolean} next state
- * @example
- * // Momentary "press" while already muted => toggle to unmuted
- * resolveNextBooleanFromMomentary(true, true); // false
- */
-function resolveNextBooleanFromMomentary(current, incoming) {
-  return incoming === current ? !current : incoming;
-}
-
-/**
  * Map an MS send index (0..15) to the Console 1 `sendNOn` field name, based on the current mapping.
  *
  * @param {number} msSendIndex
@@ -907,53 +828,8 @@ function syncBusMainSendSlotsForSendsMode(isActive) {
   }
 }
 
-const STEREO_HYBRID_NARROW_ZONE = 0.25;
-
-/** @param {number} n */
-function clamp01(n) {
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(1, n));
-}
-
-/**
- * Convert a single Console 1 pan knob value (0..1) into a stereo dual-mono pan pair.
- *
- * Design goal:
- * - Center: full stereo width (hard L/R)
- * - Small turns: narrow the image towards mono (mid stays centered)
- * - Past the narrow zone: pan the now-mono image left/right (both channels move together)
- *
- * @param {number} pan01 - Console 1 pan knob value in 0..1
- * @param {number} [narrowZone=STEREO_HYBRID_NARROW_ZONE] - 0..1 threshold where width reaches 0
- * @returns {{left:number, right:number, width:number, mid:number}}
- * @example
- * hybridStereoPanToDualMonoPans(0.5); // {left:0,right:1,width:1,mid:0.5}
- */
-function hybridStereoPanToDualMonoPans(pan01, narrowZone = STEREO_HYBRID_NARROW_ZONE) {
-  const p = clamp01(Number(pan01));
-  const x = (p - 0.5) * 2; // -1..1
-  const ax = Math.abs(x);
-  const t = Math.max(0.001, Math.min(0.99, Number(narrowZone) || STEREO_HYBRID_NARROW_ZONE));
-
-  // Zone A: width reduction only, mid stays centered.
-  if (ax <= t) {
-    const width = 1 - ax / t; // 1..0
-    const mid = 0.5;
-    const half = 0.5 * width;
-    return {
-      left: clamp01(mid - half),
-      right: clamp01(mid + half),
-      width,
-      mid,
-    };
-  }
-
-  // Zone B: mono (width=0), then pan the mono image.
-  const monoBalance01 = (ax - t) / (1 - t); // 0..1
-  const balance = Math.sign(x) * monoBalance01; // -1..1
-  const mid = clamp01(0.5 + 0.5 * balance);
-  return { left: mid, right: mid, width: 0, mid };
-}
+// Stereo-linked hybrid pan math (`clamp01`, `hybridStereoPanToDualMonoPans`) lives in
+// `panUtils.js` (pure, unit-tested) and is imported above.
 
 /**
  * Request a single value from Mixing Station. This does not subscribe; it only triggers a one-shot update.
@@ -1074,85 +950,14 @@ function setSendsMode(nextMsSendIndex) {
 // Mixing Station metering2 (type 0) returns dB values in websocket messages at `/console/metering2/{id}`.
 // We convert dB -> linear amplitude and then to a peak-style 0..1 value (Cubase reference multiplies by sqrt(2)).
 
-/**
- * Mixing Station uses non-padded base64 for metering2 binary payloads.
- * @param {string} s
- * @returns {Buffer}
- */
-function decodeNonPaddedBase64(s) {
-  if (typeof s !== "string") return Buffer.alloc(0);
-  // Pad to multiple of 4 chars.
-  const pad = (4 - (s.length % 4)) % 4;
-  const padded = pad ? s + "=".repeat(pad) : s;
-  return Buffer.from(padded, "base64");
-}
-
-/**
- * Decode metering2 binary payload.
- * Values are int16 big-endian, scaled by 100 (1.02 dB -> 102).
- *
- * We don't know per-channel stereo/extra meter counts, so we only support cases
- * where each subscribed param returns the same number of values.
- *
- * @param {string} b64
- * @param {number} paramCount
- * @returns {{valuesPerParam:number, maxDbByParam:number[]}|null}
- */
-function decodeMetering2Binary(b64, paramCount) {
-  if (!Number.isInteger(paramCount) || paramCount <= 0) return null;
-  const buf = decodeNonPaddedBase64(b64);
-  if (!buf || buf.length < 2) return null;
-  const totalValues = Math.floor(buf.length / 2);
-  if (totalValues <= 0) return null;
-  if (totalValues % paramCount !== 0) return null;
-
-  const valuesPerParam = totalValues / paramCount;
-  /** @type {number[]} */
-  const maxDbByParam = new Array(paramCount);
-  for (let p = 0; p < paramCount; p++) {
-    let maxDb = -Infinity;
-    const start = p * valuesPerParam;
-    const end = start + valuesPerParam;
-    for (let i = start; i < end; i++) {
-      const off = i * 2;
-      if (off + 1 >= buf.length) break;
-      const raw = buf.readInt16BE(off);
-      const db = raw / 100;
-      if (Number.isFinite(db)) maxDb = Math.max(maxDb, db);
-    }
-    maxDbByParam[p] = maxDb;
-  }
-
-  return { valuesPerParam, maxDbByParam };
-}
+// Metering2 binary payload decoding (`decodeNonPaddedBase64`, `decodeMetering2Binary`) lives
+// in `meteringUtils.js` (pure, unit-tested) and is imported above.
 
 /** @type {number[]} Maps metering v[] index -> MS channel index */
 let metering2ParamMsChannels = [];
 
 /** @type {Map<number, number>} MS channel index -> latest dB value */
 const msChannelMeterDb = new Map();
-
-/**
- * Convert a dB value from Mixing Station metering2 into Console 1's expected normalized peak meter.
- *
- * Console 1 expects a peak-style meter in the range 0..1.
- * Cubase reference script multiplies by $\sqrt{2}$ to convert RMS->peak.
- *
- * @param {number|string} db - Meter value in dB (e.g. -20)
- * @returns {number} Peak-like 0..1 meter value
- * @example
- * dbToConsole1MeterNorm(-6); // ~0.707.. * sqrt(2) => ~1 (clamped)
- */
-function dbToConsole1MeterNorm(db) {
-  const n = Number(db);
-  if (!Number.isFinite(n)) return 0;
-  // Values are in dB (per Mixing Station docs). Convert to linear, then to a peak-style
-  // meter value (Cubase reference script multiplies by sqrt(2)).
-  const lin = Math.pow(10, n / 20);
-  if (!Number.isFinite(lin)) return 0;
-  const peak = lin * Math.sqrt(2);
-  return Math.max(0, Math.min(1, peak));
-}
 
 /**
  * Compute the current meter value for a layout slot.
@@ -1411,77 +1216,9 @@ let bridgeLifecycle = "standby";
  */
 let objectIdByTrackId = new Map();
 
-const MIN_DB_AS_NEGATIVE_INFINITY = -90;
-// MS can report floats like -89.999 due to rounding; treat near-floor as -Infinity for Console 1.
-const DB_NEGATIVE_INFINITY_EPS = 1e-3;
-
-/**
- * Treat near-floor dB values as Console 1 "-Infinity".
- * Mixing Station can send -89.999 due to rounding.
- * @param {unknown} value
- * @returns {boolean}
- */
-function isNegativeInfinityDb(value) {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
-    value <= MIN_DB_AS_NEGATIVE_INFINITY + DB_NEGATIVE_INFINITY_EPS
-  );
-}
-
-/**
- * Normalize Console 1 level encoding for Mixing Station.
- * Console 1 encodes -Infinity as the JSON string "-Infinity".
- * @param {number|string} value
- * @returns {number|null}
- */
-function normalizeConsole1LevelForMs(value) {
-  // Console 1 encodes -Infinity as a JSON string.
-  if (value === "-Infinity") return MIN_DB_AS_NEGATIVE_INFINITY;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return MIN_DB_AS_NEGATIVE_INFINITY;
-    return value;
-  }
-  if (typeof value === "string") {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-/**
- * For stereo-linked channel names coming from Mixing Station, remove trailing side markers.
- *
- * Examples:
- * - "Keys L" -> "Keys"
- * - "Vox R" -> "Vox"
- * - "GTR P" -> "GTR"
- *
- * @param {unknown} name
- * @returns {unknown} Trimmed string if input was a string; otherwise returns input unchanged.
- */
-function trimStereoSuffixFromName(name) {
-  if (typeof name !== "string" || name.length < 2) return name;
-
-  const n = name.trimEnd();
-
-  // Common case: names end with the side marker.
-  const suffix = n.slice(-2);
-  if (suffix === " L" || suffix === " R" || suffix === " P") {
-    return n.slice(0, -2);
-  }
-
-  // Bus names often look like: "Dr L MixBus" / "Bass R MixBus" / "Kuba Vox P MB".
-  // In these cases the side marker is *before* the trailing bus label.
-  const m = n.match(/^(.*)\s([LRP])\s+(MixBus|MB)$/);
-  if (m) {
-    const base = (m[1] || "").trimEnd();
-    const tail = m[3];
-    return base ? `${base} ${tail}` : tail;
-  }
-
-  return n;
-}
+// dB/-Infinity normalization (`isNegativeInfinityDb`, `normalizeConsole1LevelForMs`) and
+// stereo name-suffix trimming (`trimStereoSuffixFromName`) live in `valueCoercion.js`
+// (pure, unit-tested) and are imported above.
 
 /**
  * Queue a write to Mixing Station.
@@ -2654,6 +2391,12 @@ function batchDeactivateAllTracks(forceSend = false) {
   }
 }
 
+/**
+ * Push current meter values for all Console 1-metered tracks (`meteredObjectIds`) in one
+ * SysEx batch. No-ops if nothing is currently metered.
+ * @example
+ * batchSendChangedMeters();
+ */
 function batchSendChangedMeters() {
   if (meteredObjectIds.size === 0) return;
   let changed = {
@@ -2789,23 +2532,8 @@ function parseSysexJson(message) {
   }
 }
 
-/**
- * Handles incoming messages from the Mixing Station WebSocket.
- * Buffers and processes all initial channel messages, then sends batch to Console 1 only once.
- * After initialization, processes messages normally.
- * @param {string|Buffer|Uint8Array|ArrayBuffer} data - The message data (usually JSON text).
- */
-function coerceWsPayloadToText(data) {
-  return typeof data === "string"
-    ? data
-    : Buffer.isBuffer(data)
-      ? data.toString("utf8")
-      : data instanceof Uint8Array
-        ? Buffer.from(data).toString("utf8")
-        : data instanceof ArrayBuffer
-          ? Buffer.from(new Uint8Array(data)).toString("utf8")
-          : String(data);
-}
+// Raw WS payload -> text coercion (`coerceWsPayloadToText`) lives in `valueCoercion.js`
+// (pure, unit-tested) and is imported above.
 
 /**
  * Extract a `/console/data/get/ch.<n>.<param>/<format>` update from a WS message.
@@ -3112,28 +2840,15 @@ function handleWSMessage(data) {
         applyChannelUpdateToSlot({ objectId, channelIndex, paramPath, format, value, suppress });
       }
     }
-    // You may handle non-heartbeat messages here if needed
+    // Any other path (e.g. the heartbeat GET's reply) is intentionally ignored — we only
+    // act on console info, metering2, and per-channel data-get messages.
   } catch (e) {
     console.error("Error parsing Mixing Station WebSocket message:", e.message);
   }
 }
 
-/**
- * Handles incoming MIDI SysEx messages, parses JSON, and sends to Mixing Station.
- * @param {number} deltaTime - Time since last message (not used).
- * @param {number[]} message - MIDI message bytes.
- * @example
- * midiInput.on("message", handleMidiMessage);
- */
-function coerceConsole1NumericString(value) {
-  // Console 1 SysEx payload may encode numbers as strings.
-  // Preserve the special "-Infinity" string (Console 1 OSD expects it as-is).
-  if (typeof value === "string" && value !== "-Infinity") {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
-  }
-  return value;
-}
+// Console 1 SysEx numeric-string coercion (`coerceConsole1NumericString`) lives in
+// `valueCoercion.js` (pure, unit-tested) and is imported above.
 
 /**
  * Build a Console 1 update payload for Bus/Main fader display while sends mode is active.

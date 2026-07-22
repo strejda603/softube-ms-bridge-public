@@ -47,7 +47,7 @@
     },
     "files": [
       "app/**/*",
-      "index.js",
+      "*.js",
       "package.json",
       "README.md"
     ],
