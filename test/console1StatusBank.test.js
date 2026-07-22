@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   STATUS_BANK_INDICATORS,
   STATUS_BANK_SIZE,
+  STATUS_BANK_FIRST_GROUP_SIZE,
   START_SLOT_OBJECT_ID,
   buildStatusBankSlots,
   startSlotDisplayFor,
@@ -21,13 +22,14 @@ test("buildStatusBankSlots: exactly 10 slots with sequential objectIds", () => {
   slots.forEach((slot, i) => assert.equal(slot.objectId, i));
 });
 
-test("buildStatusBankSlots: first 7 slots are status kind, in indicator order", () => {
+test("buildStatusBankSlots: 3 status, empty, 4 status, empty, start — in indicator order", () => {
   const slots = buildStatusBankSlots();
-  const statusSlots = slots.slice(0, 7);
   assert.deepEqual(
-    statusSlots.map((s) => s.kind),
-    Array(7).fill("status")
+    slots.map((s) => s.kind),
+    ["status", "status", "status", "empty", "status", "status", "status", "status", "empty", "start"]
   );
+
+  const statusSlots = slots.filter((s) => s.kind === "status");
   assert.deepEqual(
     statusSlots.map((s) => s.statusKey),
     STATUS_BANK_INDICATORS.map((i) => i.key)
@@ -38,11 +40,11 @@ test("buildStatusBankSlots: first 7 slots are status kind, in indicator order", 
   );
 });
 
-test("buildStatusBankSlots: slots 7-8 are empty, slot 9 is start", () => {
+test("buildStatusBankSlots: the first group has STATUS_BANK_FIRST_GROUP_SIZE indicators", () => {
   const slots = buildStatusBankSlots();
-  assert.equal(slots[7].kind, "empty");
-  assert.equal(slots[8].kind, "empty");
-  assert.equal(slots[9].kind, "start");
+  assert.equal(slots[0].statusKey, STATUS_BANK_INDICATORS[0].key);
+  assert.equal(slots[STATUS_BANK_FIRST_GROUP_SIZE - 1].kind, "status");
+  assert.equal(slots[STATUS_BANK_FIRST_GROUP_SIZE].kind, "empty");
 });
 
 test("buildStatusBankSlots: every slot has no Mixing Station channel mapping", () => {

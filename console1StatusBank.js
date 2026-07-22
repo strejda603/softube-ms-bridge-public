@@ -26,10 +26,10 @@ const STATUS_BANK_INDICATORS = [
   { key: "ipad", label: "iPad" },
   { key: "spdSxPro", label: "SPD-SX PRO" },
   { key: "midiMaestro", label: "MIDI Maestro" },
-  { key: "bomeMtp", label: "Bome MIDI Translator Pro" },
+  { key: "bomeMtp", label: "Bome MIDI" },
   { key: "mixingStation", label: "Mixing Station" },
-  { key: "console1Osd", label: "Console 1 On-Screen Display" },
-  { key: "abletonLive", label: "Ableton Live 12 Suite" },
+  { key: "console1Osd", label: "C1 OSD" },
+  { key: "abletonLive", label: "Ableton" },
 ];
 
 /** Total slot count of the fixed status/Start bank (bank 0). */
@@ -38,9 +38,12 @@ const STATUS_BANK_SIZE = 10;
 /** 0-based objectId of the Start slot — the last slot of bank 0. */
 const START_SLOT_OBJECT_ID = STATUS_BANK_SIZE - 1;
 
+/** Number of status indicators in the first group, before the first spacer. */
+const STATUS_BANK_FIRST_GROUP_SIZE = 3;
+
 /**
- * Build the fixed status/Start bank: 7 status slots (one per indicator, in order), 2 empty
- * spacer slots, then the Start slot as the 10th/last slot.
+ * Build the fixed status/Start bank: the first 3 indicators, an empty spacer, the remaining
+ * 4 indicators, another empty spacer, then the Start slot as the 10th/last slot.
  *
  * @returns {StatusBankSlot[]}
  * @example
@@ -50,7 +53,7 @@ function buildStatusBankSlots() {
   /** @type {StatusBankSlot[]} */
   const slots = [];
 
-  for (const indicator of STATUS_BANK_INDICATORS) {
+  const pushStatus = (indicator) => {
     slots.push({
       objectId: slots.length,
       kind: "status",
@@ -59,11 +62,18 @@ function buildStatusBankSlots() {
       statusKey: indicator.key,
       statusLabel: indicator.label,
     });
-  }
-
-  while (slots.length < STATUS_BANK_SIZE - 1) {
+  };
+  const pushEmpty = () => {
     slots.push({ objectId: slots.length, kind: "empty", msChannels: [], msPrimary: null });
-  }
+  };
+
+  const firstGroup = STATUS_BANK_INDICATORS.slice(0, STATUS_BANK_FIRST_GROUP_SIZE);
+  const secondGroup = STATUS_BANK_INDICATORS.slice(STATUS_BANK_FIRST_GROUP_SIZE);
+
+  for (const indicator of firstGroup) pushStatus(indicator);
+  pushEmpty();
+  for (const indicator of secondGroup) pushStatus(indicator);
+  pushEmpty();
 
   slots.push({ objectId: slots.length, kind: "start", msChannels: [], msPrimary: null });
 
@@ -124,6 +134,7 @@ function statusSlotColorFor(isOn, onColor, offColor) {
 module.exports = {
   STATUS_BANK_INDICATORS,
   STATUS_BANK_SIZE,
+  STATUS_BANK_FIRST_GROUP_SIZE,
   START_SLOT_OBJECT_ID,
   buildStatusBankSlots,
   startSlotDisplayFor,

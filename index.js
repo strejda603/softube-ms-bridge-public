@@ -586,8 +586,15 @@ function applyRuntimeConfigAndResync(cfg, reason = "config apply") {
   inputSendState = new Map();
 
   if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
-    subscribeToRequiredChannelData();
-    updateMetering2Subscription();
+    // Reconnect rather than re-subscribing on the same live connection: Mixing Station only
+    // pushes a channel's *current* value in response to a genuinely new subscription — a
+    // redundant subscribe to a path it already considers subscribed is a no-op on its side.
+    // Re-subscribing here without reconnecting left Console 1 showing stale/default values
+    // until the next full reconnect (e.g. a Stop then Start). connectMixingStationWebSocket's
+    // own "open" handler repeats the cache resets above (harmless) and re-runs the handshake,
+    // subscribe, and finalizeInitialization sequence — the same proven path Start already uses.
+    connectMixingStationWebSocket();
+    return { changed: true, reconnected: true, resynced: true, beforeKey: before };
   }
 
   forceConsole1FullResync(reason);
@@ -1738,7 +1745,12 @@ function applyLiveStatusColors(status) {
     );
     if (track.color !== color) {
       track.color = color;
-      queueConsole1TrackUpdate(track.trackId, { color });
+      // Force-send: status indicators must work in standby too, before Console 1 has ever
+      // acked a handshake (osdEnabled false) — same reasoning as sendStatusBankTracks()'s
+      // forced sends. Without this, the color change lands in the cache (so the diff check
+      // above won't fire again for the same value) but the SysEx update itself is silently
+      // dropped until something else forces a resync (e.g. pressing Start).
+      queueConsole1TrackUpdate(track.trackId, { color }, { forceSend: true });
     }
   }
 }
@@ -1760,7 +1772,10 @@ function applyStartSlotDisplay() {
     track.color = display.color;
     partial.color = display.color;
   }
-  if (Object.keys(partial).length > 0) queueConsole1TrackUpdate(track.trackId, partial);
+  // Force-send: same standby-before-handshake reasoning as applyLiveStatusColors() above.
+  if (Object.keys(partial).length > 0) {
+    queueConsole1TrackUpdate(track.trackId, partial, { forceSend: true });
+  }
 }
 
 /**
@@ -1977,25 +1992,57 @@ function noteMsWrite(msKey, value) {
 /**
  * Queue a partial track update to Console 1 (batched + throttled).
  *
+ * By default, queued updates are dropped at flush time if `osdEnabled` is false (Console 1
+ * hasn't acked a handshake yet) — matching the semantics `sendSysexToConsole1` already uses
+ * for non-forced sends. Pass `forceSend: true` for updates that must reach Console 1
+ * regardless (e.g. the status/Start bank, which — like `sendStatusBankTracks()` and
+ * `deactivateRealChannelTracks()` — must work in standby, before any handshake happens).
+ * If a trackId has both forced and non-forced updates queued in the same flush window, the
+ * merged update is sent as forced (once forced, always forced for that flush).
+ *
  * @example
  * queueConsole1TrackUpdate(track.trackId, { volume: -Infinity, mute: true });
+ * queueConsole1TrackUpdate(track.trackId, { color }, { forceSend: true });
  *
  * @param {string} trackId
  * @param {Record<string, any>} partial
+ * @param {{forceSend?: boolean}} [opts]
  */
-function queueConsole1TrackUpdate(trackId, partial) {
+function queueConsole1TrackUpdate(trackId, partial, opts = {}) {
   if (!partial || Object.keys(partial).length === 0) return;
-  const prev = console1UpdateQueue.get(trackId) || { trackId };
-  console1UpdateQueue.set(trackId, { ...prev, ...partial, trackId });
+  const prev = console1UpdateQueue.get(trackId) || { trackId, __forceSend: false };
+  const forceSend = !!prev.__forceSend || !!opts.forceSend;
+  console1UpdateQueue.set(trackId, { ...prev, ...partial, trackId, __forceSend: forceSend });
 
   if (console1FlushTimer) return;
   console1FlushTimer = setTimeout(() => {
     console1FlushTimer = null;
-    if (!osdEnabled || console1UpdateQueue.size === 0) return;
-    const batch = Array.from(console1UpdateQueue.values());
-    console1UpdateQueue.clear();
-    for (let i = 0; i < batch.length; i += 100) {
-      sendSysexToConsole1({ trackBatch: batch.slice(i, i + 100) });
+    if (console1UpdateQueue.size === 0) return;
+
+    // Forced entries always go out now, regardless of osdEnabled, and are removed from the
+    // queue. Non-forced entries are left in place (same as the pre-forceSend behavior) if
+    // osdEnabled is false, so they keep accumulating with later updates for the same trackId
+    // until a flush happens to run while osdEnabled is true.
+    /** @type {object[]} */
+    const forced = [];
+    for (const entry of console1UpdateQueue.values()) {
+      if (entry.__forceSend) forced.push(entry);
+    }
+    for (const entry of forced) console1UpdateQueue.delete(entry.trackId);
+
+    for (let i = 0; i < forced.length; i += 100) {
+      const batch = forced.slice(i, i + 100).map(({ __forceSend, ...rest }) => rest);
+      sendSysexToConsole1({ trackBatch: batch }, true);
+    }
+
+    if (osdEnabled && console1UpdateQueue.size > 0) {
+      const normal = Array.from(console1UpdateQueue.values()).map(
+        ({ __forceSend, ...rest }) => rest,
+      );
+      console1UpdateQueue.clear();
+      for (let i = 0; i < normal.length; i += 100) {
+        sendSysexToConsole1({ trackBatch: normal.slice(i, i + 100) });
+      }
     }
   }, CONSOLE1_FLUSH_MS);
 }
@@ -2148,8 +2195,13 @@ function connectMixingStationWebSocket() {
     msWebSocket.close();
   }
   msWebSocket = new WebSocket(MIXING_STATION_WS_URL);
+  // Captured so the close handler below can tell a stale socket's close event (e.g. the
+  // just-closed previous connection, if its "close" fires after this new one is already
+  // assigned to `msWebSocket`) from the current socket's own close — an unguarded stale
+  // close event would otherwise schedule a spurious extra reconnect.
+  const socket = msWebSocket;
 
-  msWebSocket.on("open", async () => {
+  socket.on("open", async () => {
     console.log("Connected to Mixing Station WebSocket");
 
     // Best-effort: discover mixer channel architecture before building the layout/subscriptions.
@@ -2212,7 +2264,12 @@ function connectMixingStationWebSocket() {
     }, 4000);
   });
 
-  msWebSocket.on("close", () => {
+  socket.on("close", () => {
+    // Ignore a stale socket's close event — `msWebSocket` already points at a newer
+    // connection (see the `socket` capture above), so this one's teardown is moot and must
+    // not clear the newer socket's already-running heartbeat/init-flush timers.
+    if (socket !== msWebSocket) return;
+
     if (wsHeartbeatInterval) {
       clearInterval(wsHeartbeatInterval);
       wsHeartbeatInterval = null;
@@ -3302,6 +3359,15 @@ function resolveMidiTrackContext(parsed) {
  * Handle an incoming Console 1 MIDI message for a status/Start bank slot (bank 0). These
  * slots have no Mixing Station channel, so no MS writes are ever produced here — only the
  * Start slot's `selected` field is meaningful, as the hardware Start/Stop trigger.
+ *
+ * For a normal track, Console 1's `selected` state gets cleared back to `false` indirectly,
+ * via Mixing Station echoing `ch.N.selected=false` back over the WS once another channel is
+ * selected (see `handleMidiSelectedUpdate`). The Start slot has no MS channel backing it, so
+ * nothing would ever clear it the same way — left alone, Console 1 would consider it
+ * permanently "selected" after the first press and stop sending a fresh `selected:true` on
+ * subsequent presses. Echo `selected:false` back immediately after handling the trigger so
+ * the next physical press is a fresh rising edge.
+ *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
  */
@@ -3311,6 +3377,10 @@ function handleStatusOrStartSlotMidiMessage(parsed, slot) {
   if (!triggerType) return;
   console.log(`[Lifecycle] hardware trigger: ${triggerType}`);
   process.stdout.write(`@@BRIDGE_EVENT@@${JSON.stringify({ type: `hardware:${triggerType}` })}\n`);
+
+  const track = getOrCreateTrackInfo(slot.objectId);
+  track.selected = false;
+  queueConsole1TrackUpdate(track.trackId, { selected: false }, { forceSend: true });
 }
 
 /**
