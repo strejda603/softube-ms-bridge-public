@@ -1625,6 +1625,12 @@ function createDefaultTrackForSlot(objectId) {
   let isActive = true;
   let color = 6842214;
   let name = getDefaultNameForObjectId(objectId);
+  let send1On = false;
+  let send2On = false;
+  let send3On = false;
+  let send4On = false;
+  let send5On = false;
+  let send6On = false;
   if (kind === "bus") color = CONSOLE1_BUS_COLOR;
   else if (kind === "main") color = CONSOLE1_MAIN_COLOR;
   else if (kind === "empty") isActive = false;
@@ -1633,10 +1639,22 @@ function createDefaultTrackForSlot(objectId) {
     // Default to "off" until the first status:update arrives from the GUI's live
     // MIDI/process detection (Feature A) — see applyLiveStatusColors() below.
     color = CONSOLE1_STATUS_OFF_COLOR;
+    send1On = true;
+    send2On = true;
+    send3On = true;
+    send4On = true;
+    send5On = true;
+    send6On = true;
   } else if (kind === "start") {
     const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_START_COLOR, CONSOLE1_STOP_COLOR);
     name = display.name;
     color = display.color;
+    send1On = true;
+    send2On = true;
+    send3On = true;
+    send4On = true;
+    send5On = true;
+    send6On = true;
   }
 
   return {
@@ -1653,17 +1671,17 @@ function createDefaultTrackForSlot(objectId) {
     maxVolumeValue: 10.0,
     maxSendValue: 10.0,
     pan: 0.5,
-    send1On: false,
+    send1On: send1On,
     send1: 0,
-    send2On: false,
+    send2On: send2On,
     send2: 0,
-    send3On: false,
+    send3On: send3On,
     send3: 0,
-    send4On: false,
+    send4On: send4On,
     send4: 0,
-    send5On: false,
+    send5On: send5On,
     send5: 0,
-    send6On: false,
+    send6On: send6On,
     send6: 0,
   };
 }
