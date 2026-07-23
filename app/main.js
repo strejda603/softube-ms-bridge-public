@@ -5,6 +5,7 @@ const { spawn } = require("child_process");
 const { parseCliArgs, getUserArgv } = require("./cliArgs");
 const { startStatusMonitor } = require("./statusMonitor");
 
+// --- CLI args & single-instance lock ---
 // CLI flags
 // Usage: `npm run gui -- --verbose`
 // - Prints bridge logs to the parent Terminal
@@ -75,6 +76,7 @@ let bridgeLifecycleState = "standby";
  */
 const BRIDGE_EVENT_PREFIX = "@@BRIDGE_EVENT@@";
 
+// --- Bridge process communication (log lines, control messages, hardware events) ---
 /**
  * Send parsed CLI args to the renderer over the `cli:apply` channel.
  * @param {import('electron').BrowserWindow|null} win
@@ -143,6 +145,7 @@ function sendStatusToBridge(status) {
   }
 }
 
+// --- User data / presets file management ---
 function getUserDataFile(relPath) {
   return path.join(app.getPath("userData"), relPath);
 }
@@ -264,6 +267,7 @@ function getAppIconImage() {
   }
 }
 
+// --- Main window ---
 function createWindow() {
   const iconImage = getAppIconImage();
   // Best-effort: on macOS set dock icon too (dev `npm run gui` won't otherwise show it).
@@ -331,6 +335,7 @@ function createWindow() {
   });
 }
 
+// --- Bridge child process lifecycle ---
 function stopBridgeGraceful({ reason } = {}) {
   if (!bridgeProcess) return Promise.resolve();
 
@@ -437,6 +442,7 @@ function spawnBridgeProcess() {
   });
 }
 
+// --- Electron app lifecycle events ---
 app.on("second-instance", (_event, argv, _workingDirectory) => {
   // Note: unlike the initial-launch argv, Electron's forwarded second-instance
   // argv can include injected Chromium/dev-mode switches we don't control
@@ -492,6 +498,7 @@ app.on("before-quit", (e) => {
     });
 });
 
+// --- IPC handlers: bridge control ---
 ipcMain.handle("bridge:start", async (_evt, config) => {
   const effectiveConfig = VERBOSE_TERMINAL ? { ...(config || {}), logJson: true } : config;
 
@@ -541,6 +548,7 @@ ipcMain.handle("bridge:status", async () => {
   return { running: bridgeLifecycleState === "running" };
 });
 
+// --- IPC handlers: presets ---
 ipcMain.handle("presets:list", async () => {
   return listPresets();
 });

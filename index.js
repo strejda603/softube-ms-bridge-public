@@ -72,6 +72,7 @@ const trackIdByObjectId = new Map();
 /** @type {Set<string>} */
 const usedTrackIds = new Set();
 
+// --- Console1 track ID management ---
 /** @returns {string} 8-hex uppercase */
 function generateUniqueTrackId8Hex() {
   // 32-bit random => 8 hex chars.
@@ -122,6 +123,7 @@ let MAIN_STEREO_CHANNELS = [70, 71]; // Main L/R
  */
 let consoleInfoRequestState = { pending: false, accepted: false, resolve: null };
 
+// --- Console architecture info (/console/information) ---
 /**
  * Apply Mixing Station `/console/information` response to our channel constants.
  * Uses best-effort heuristics and keeps existing defaults as fallback.
@@ -231,25 +233,24 @@ function fetchAndApplyConsoleInformation(timeoutMs = 500) {
   });
 }
 
+// --- Console1 colors ---
 // Console 1-only colors for non-input "virtual" tracks.
 // These are intentionally NOT part of Mixing Station's 16-color palette (`baseColors`/styleClass).
 // They are used only as visual markers on Console 1 and are never sent to Mixing Station.
-// Softube color integer encoding: r in LSB, g in next byte, b in MSB.
+// Softube color integer encoding: r in LSB, g in next byte, b in MSB. (BGR order in hex.)
 let CONSOLE1_MAIN_COLOR = 0x00a5ff; // Orange-ish (r=255,g=165,b=0)
 let CONSOLE1_BUS_COLOR = 0x800080; // Purple (r=128,g=0,b=128)
 // Status/Start bank (bank 0) colors. Not user-configurable (unlike the two above), since
 // this bank's contents are fixed by the feature, not by the user's channel layout.
-const CONSOLE1_STOP_COLOR = 0x0000ff; // Pure red (matches MS_PALETTE_BASE_COLORS[1] "Red")
-// Separate from CONSOLE1_MAIN_COLOR (which is also the Main bus track's color) so the
-// Start slot's "not running" color can be tuned independently later.
-const CONSOLE1_START_COLOR = 0x00a5ff; // Same value as CONSOLE1_MAIN_COLOR today
-// Status indicator (bank 0, slots 0-6) on/off colors, driven by live Feature A data (B2).
+const CONSOLE1_START_COLOR = 0xff841b;
+const CONSOLE1_STOP_COLOR = 0x5a28f8; // Pure red (matches MS_PALETTE_BASE_COLORS[1] "Red")
 const CONSOLE1_STATUS_ON_COLOR = 0x00ff00; // Pure green (matches MS_PALETTE_BASE_COLORS[2] "Green")
 const CONSOLE1_STATUS_OFF_COLOR = 0x0000ff; // Pure red — same value as CONSOLE1_STOP_COLOR, distinct constant
 
 // Mixing Station color mapping (palette index / styleClass / RGB int -> Softube 24-bit int)
 // lives in `midiColorUtils.js` (pure, unit-tested) and is imported above.
 
+// --- Console1 <-> Mixing Station send mapping ---
 // Console 1 -> Mixing Station send mapping.
 // Console 1 exposes only 6 sends, while the mixer can have 16 buses.
 // Map each C1 send slot (1..6) to the target MS bus number (1..16).
@@ -316,6 +317,7 @@ function rebuildSendMapping() {
 
 rebuildSendMapping();
 
+// --- Track order configuration ---
 // Input track order on Console 1.
 //
 // Supports stereo-linked pairs by grouping two MS channels into one Console 1 track.
@@ -342,6 +344,7 @@ let INPUT_TRACK_ORDER = [];
 // let BUS_TRACK_ORDER = [1, 2, [7, 8], 3, [9, 10], [13, 14], 4, [5, 6]];
 let BUS_TRACK_ORDER = [];
 
+// --- Bridge configuration loading ---
 /**
  * Bridge configuration (as persisted by the GUI and/or config file).
  *
@@ -443,6 +446,7 @@ function loadBridgeConfig() {
 
 loadBridgeConfig();
 
+// --- Live runtime config apply/resync ---
 /**
  * Force a full Console 1 re-sync.
  *
@@ -604,6 +608,7 @@ function applyRuntimeConfigAndResync(cfg, reason = "config apply") {
   return { changed: true, reconnected: false, resynced: true, beforeKey: before };
 }
 
+// --- Runtime control channel (stdin from Electron GUI) ---
 /**
  * Listen for newline-delimited JSON control messages on stdin.
  *
@@ -1230,6 +1235,7 @@ let objectIdByTrackId = new Map();
 // stereo name-suffix trimming (`trimStereoSuffixFromName`) live in `valueCoercion.js`
 // (pure, unit-tested) and are imported above.
 
+// --- Mixing Station writes & subscriptions ---
 /**
  * Queue a write to Mixing Station.
  *
@@ -1288,6 +1294,7 @@ function subscribeToRequiredChannelData() {
   }
 }
 
+// --- Track layout building ---
 /**
  * Build the Console 1 track layout.
  *
@@ -1442,6 +1449,7 @@ function rebuildTrackLayout() {
   objectIdsByMsChannel = map;
 }
 
+// --- OSD enable state ---
 /**
  * Enables On-Screen Display (OSD) integration.
  * @example
@@ -1460,6 +1468,7 @@ function disableOSD() {
   osdEnabled = false;
 }
 
+// --- Console1 Fader MIDI port management ---
 /**
  * Finds and opens the first MIDI input port matching Console 1 Fader Mk III DAW or MIDI.
  * Ensures SysEx, timing, and active sensing messages are not ignored.
@@ -1598,6 +1607,7 @@ let wsHeartbeatInterval = null;
  * @property {number|string} send6
  */
 
+// --- Track cache (Console1 OSD track objects) ---
 /**
  * Creates the default Console 1 track object for a given layout slot.
  * @param {number} objectId - Layout slot index (0-based)
@@ -1747,6 +1757,7 @@ function resetRealChannelTrackCache() {
   tracksByObjectId = preserved;
 }
 
+// --- Status/Start bank (bank 0) display ---
 /**
  * Update the 7 status indicator slots' colors from a live status snapshot (Feature A's
  * `computeStatus()` shape, forwarded from the GUI via `status:update`). Applies regardless
@@ -1847,6 +1858,7 @@ function deactivateRealChannelTracks(forceSend = false) {
   }
 }
 
+// --- Bridge lifecycle (standby/running) ---
 /**
  * Enter `standby`: disconnect from Mixing Station (if connected), deactivate the real
  * channel banks' display, and show "Start"/`CONSOLE1_START_COLOR` on the Start slot. The
@@ -1893,6 +1905,7 @@ function enterRunningState(config) {
   applyStartSlotDisplay();
 }
 
+// --- Applying Mixing Station updates to cached tracks ---
 /**
  * Apply a single Mixing Station update (path + value) onto a cached Console 1 track.
  * Returns a partial object containing only fields that changed.
@@ -2014,6 +2027,7 @@ function noteMsWrite(msKey, value) {
   recentMsWrites.set(msKey, { value, ts: Date.now() });
 }
 
+// --- Console1 update queue (batched SysEx sends) ---
 /**
  * Queue a partial track update to Console 1 (batched + throttled).
  *
@@ -2072,6 +2086,7 @@ function queueConsole1TrackUpdate(trackId, partial, opts = {}) {
   }, CONSOLE1_FLUSH_MS);
 }
 
+// --- Initialization / full resync ---
 /**
  * End the initialization buffering phase and send a single full track dump.
  *
@@ -2169,6 +2184,7 @@ function scheduleConsole1FullResync(reason) {
   initFlushTimeoutId = setTimeout(() => finalizeInitialization(reason), delay);
 }
 
+// --- Mixing Station data subscriptions ---
 /**
  * Subscribe to channel data updates from Mixing Station.
  * @param {string} path
@@ -2209,6 +2225,7 @@ function unsubscribeFromChannelData(path, format) {
   delete wsDataSubscriptions[subKey];
 }
 
+// --- Mixing Station WebSocket connect/reconnect ---
 /**
  * Establishes and maintains a WebSocket connection to Mixing Station.
  * Handles auto-reconnect and keep-alive.
@@ -2331,6 +2348,7 @@ function connectMixingStationWebSocket() {
   });
 }
 
+// --- Sending SysEx to Console1 ---
 /**
  * Sends a JSON object as a SysEx message to Console 1 via MIDI output.
  * Handles encoding, escaping, and -Infinity serialization.
@@ -2418,6 +2436,7 @@ function getObjectIdForTrackId(trackId) {
   return undefined;
 }
 
+// --- Handshake and full-batch sends ---
 /**
  * Starts handshake with Console 1 (OSD protocol).
  * @example
@@ -2498,6 +2517,7 @@ function batchSendChangedMeters() {
   }
 }
 
+// --- Console1 control messages (RESET/ENABLE/DISABLE/handshake ack/activeMeters) ---
 /**
  * Handle Console 1 control messages (ENABLE/DISABLE/RESET/handshake ack).
  *
@@ -2563,6 +2583,7 @@ function handleConsole1ControlJson(parsed) {
   }
 }
 
+// --- Sending to Mixing Station / parsing incoming SysEx ---
 /**
  * Sends a message to Mixing Station via WebSocket if connected.
  * If not connected, the message is dropped (callers may retry later).
@@ -2618,6 +2639,7 @@ function parseSysexJson(message) {
 // Raw WS payload -> text coercion (`coerceWsPayloadToText`) lives in `valueCoercion.js`
 // (pure, unit-tested) and is imported above.
 
+// --- Handling Mixing Station WebSocket messages ---
 /**
  * Extract a `/console/data/get/ch.<n>.<param>/<format>` update from a WS message.
  *
@@ -2933,6 +2955,7 @@ function handleWSMessage(data) {
 // Console 1 SysEx numeric-string coercion (`coerceConsole1NumericString`) lives in
 // `valueCoercion.js` (pure, unit-tested) and is imported above.
 
+// --- Handling Console1 MIDI messages (track parameter updates) ---
 /**
  * Build a Console 1 update payload for Bus/Main fader display while sends mode is active.
  *
@@ -3485,6 +3508,7 @@ function onConsole1MidiInputMessage(deltaTime, message) {
   }
 }
 
+// --- Shutdown ---
 /**
  * Sets up handlers for graceful application shutdown on SIGINT (CTRL+C) and SIGTERM signals.
  *
@@ -3549,6 +3573,7 @@ function setupShutdownHandler() {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
+// --- Bootstrap ---
 async function startBridgeProcess() {
   setupShutdownHandler();
   await waitForConsole1MidiPorts();
