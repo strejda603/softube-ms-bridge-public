@@ -23,6 +23,7 @@ SHASUMS256.txt
 compile_commands.json
 .envrc
 .worktrees/
+.ableton-prefs-diff/
 
 ### AI ###
 .claude/
