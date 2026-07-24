@@ -1,8 +1,7 @@
 #!/bin/bash
-# sleep 10
-# Step 1: Enable iDAM on iPad using Audio MIDI Setup on macOS
+# Step 1: Enable iDAM on iPad and connect MIDI Maestro (Bluetooth) using Audio MIDI Setup on macOS
 osascript <<'EOF'
--- Kontrola, zda aplikace běží. Pokud ne, spustí se a počká na její načtení.
+-- 1. Kontrola, zda aplikace běží. Pokud ne, spustí se a počká na její načtení.
 tell application "System Events"
 	if not (exists process "Audio MIDI Setup") then
 		tell application "Audio MIDI Setup" to activate
@@ -18,12 +17,14 @@ tell application "System Events"
 	end if
 end tell
 
+-- 2. INTERAKCE V OKNĚ AUDIO MIDI SETUP
 tell application "System Events"
 	tell process "Audio MIDI Setup"
 		set oknoAudio to missing value
+		set oknoBT to window "Konfigurace Bluetooth"
 		set seznamOken to every window
-		set nazevZarizeni to "Daniel Pitra - iPad"
 
+		-- 2.1 Najdeme okno, které obsahuje "Reproduktory", "Mikrofon", "zařízení" nebo "BlackHole"
 		repeat with w in seznamOken
 			if name of w contains "Reproduktory" or name of w contains "Mikrofon" or name of w contains "zařízení" or name of w contains "BlackHole" then
 				set oknoAudio to w
@@ -31,32 +32,81 @@ tell application "System Events"
 			end if
 		end repeat
 
-		if oknoAudio is missing value then
-			log "Okno Audio se nepodařilo nalézt."
-			return
-		end if
-
+		-- 2.2 Interakce s nalezeným oknem
 		tell oknoAudio
 			tell splitter group 1 to tell scroll area 1 to tell outline 1
+				set celkemRadku to count rows
+				set nalezeno to false
 				repeat with i from 1 to count rows
 					try
 						set rowName to name of static text 1 of UI element 1 of row i
-						if rowName is equal to nazevZarizeni then
-							select row i
-							delay 0.2
-							click button "Zapnout" of UI element nazevZarizeni of row i
-
-							-- Oprava: Skrytí aplikace musí proběhnout PŘED opuštěním cyklu (exit repeat)
-							set visible of process "Audio MIDI Setup" to false
+						if rowName contains "iPad" then
+							-- select row i
+							-- delay 0.2
+							click button "Zapnout" of UI element 1 of row i
+							set nalezeno to true
 							exit repeat
 						end if
-					on error
-						-- log "Chyba"
+					on error chybovaHlaska
+						-- log "Chyba řádku: " & chybovaHlaska
 					end try
 				end repeat
 			end tell
 		end tell
+
+		-- 2.3 Interakce s oknem "Konfigurace Bluetooth" pro připojení zařízení "MIDI Maestro"
+		tell oknoBT
+			tell scroll area 1 to tell table 1
+				set nalezeno to false
+				set celkemRadku to count rows
+
+				repeat with i from 1 to celkemRadku
+					try
+						set aktualniRadek to row i
+						set textRadku to ""
+
+						-- Prohledáme buňky řádku pro ověření názvu
+						tell aktualniRadek
+							set vsechnyBunky to every UI element
+							repeat with jednaBunka in vsechnyBunky
+								try
+									set textRadku to textRadku & " " & (name of jednaBunka as string)
+								end try
+							end repeat
+						end tell
+
+						if textRadku contains "MIDI Maestro" then
+							log "Zařízení nalezeno na řádku " & i & ". Pokus o stisknutí tlačítka uvnitř buněk..."
+
+							-- OPRAVA: Projdeme elementy (buňky) řádku a klikneme na první tlačítko, které v nich najdeme
+							tell aktualniRadek
+								repeat with jednaBunka in vsechnyBunky
+									-- Pokud buňka obsahuje nějaké tlačítko, klikneme na něj (nezávisle na jeho textovém názvu)
+									if (count buttons of jednaBunka) > 0 then
+										click button "Připojit" of jednaBunka
+										log "Úspěch: Tlačítko pro připojení MIDI Maestro bylo stisknuto."
+										set nalezeno to true
+										exit repeat
+									end if
+								end repeat
+							end tell
+
+							if nalezeno then exit repeat
+						end if
+					on error chybovaHlaska
+						log "Chyba řádku " & i & ": " & chybovaHlaska
+					end try
+				end repeat
+
+				if not nalezeno then
+					log "Zařízení 'MIDI Maestro' nebylo v seznamu nalezeno nebo se nepodařilo kliknout."
+				end if
+			end tell
+		end tell
 	end tell
+
+	-- Skryjeme celou aplikaci Audio MIDI Setup na pozadí
+	set visible of process "Audio MIDI Setup" to false
 end tell
 EOF
 sleep 5
