@@ -1,3 +1,18 @@
+/**
+ * Softube Console 1 <-> Mixing Station Bridge
+ *
+ * Listens for SysEx MIDI messages from Softube Console 1, parses JSON payloads,
+ * and sends corresponding commands to Mixing Station via WebSocket.
+ *
+ * Usage:
+ *   1. Install Mixing Station and Softube Console 1 software.
+ *   2. Install Node.js and dependencies: `npm install`.
+ *   3. Connect Softube Console 1 (Fader Mk III) to your computer via USB.
+ *   4. Start Mixing Station with WebSocket API enabled (default ws://localhost:8080).
+ *   5. Run this script: `node index.js` or `npm run gui` for GUI mode.
+ *
+ * Author: Strejda603
+ */
 let midi;
 try {
   midi = require("@julusian/midi");
@@ -29,6 +44,9 @@ const {
   coerceWsPayloadToText,
 } = require("./valueCoercion");
 
+// ###################################
+// ############ CONSTANTS ############
+// ###################################
 // --- MIDI SysEx constants ---
 const SYSEX_START = 0xf0;
 const SYSEX_STOP = 0xf7;
@@ -52,12 +70,10 @@ const METERING2_BINARY = false;
 // Mixing Station channel architecture can be discovered via `/console/information`.
 // Defaults match Behringer X32-style layouts and are used as fallbacks.
 let MS_TOTAL_CHANNELS = 80;
-
 // Console 1 Fader Mk III: 10 faders. We build 10-wide banks of tracks.
 // Current layout places Main only once (10th fader on the last bus bank).
 const FADER_BANK_SIZE = 10;
 const INPUTS_PER_BANK = 10; // Input banks use all faders; Main is placed only once (see `rebuildTrackLayout`).
-
 let INPUT_CHANNEL_COUNT = 32; // Input channels 0..31
 let BUS_CHANNEL_START = 48; // Bus channels 48..63
 let BUS_CHANNEL_COUNT = 16;
@@ -77,12 +93,12 @@ const CONSOLE1_STOP_COLOR = 0x5a28f8; // Red (like "danger" in Bootstrap 5 palet
 const CONSOLE1_STATUS_ON_COLOR = 0x00ff00; // Pure green (matches MS_PALETTE_BASE_COLORS[2] "Green")
 const CONSOLE1_STATUS_OFF_COLOR = 0x0000ff; // Pure red — same value as CONSOLE1_STOP_COLOR, distinct constant
 
-// --- Console1 <-> Mixing Station send mapping ---
-// Console 1 -> Mixing Station send mapping.
+// ####################################
+// ###### C1 <-> MS SEND MAPPING ######
+// ####################################
 // Console 1 exposes only 6 sends, while the mixer can have 16 buses.
 // Map each C1 send slot (1..6) to the target MS bus number (1..16).
-// Example from your requirement:
-//   C1 Send1 -> Bus1, Send2 -> Bus2, Send3 -> Bus3, Send4 -> Bus7, Send5 -> Bus9, Send6 -> Bus13
+// Example: Send1 -> Bus1, Send2 -> Bus2, Send3 -> Bus3, Send4 -> Bus7, Send5 -> Bus9, Send6 -> Bus13
 // let C1_SEND_TO_MS_BUS_NUMBER = [1, 2, 3, 7, 9, 13];
 let C1_SEND_TO_MS_BUS_NUMBER = [];
 
@@ -144,34 +160,25 @@ function rebuildSendMapping() {
 
 rebuildSendMapping();
 
-// --- Track order configuration ---
+// ##################################
+// ####### TRACK ORDER CONFIG #######
+// ##################################
 // Input track order on Console 1.
 //
 // Supports stereo-linked pairs by grouping two MS channels into one Console 1 track.
 // For grouped stereo tracks, pan is handled by a hybrid width/balance control (writes both channels).
-//
-// Order requested:
-// 16..23,
-// then 14+15 (stereo),
-// 9, 7, 8,
-// then 10+11 (stereo),
-// 12+13 (stereo),
-// 0, 1, 2,
-// 4, 5, 6,
-// then the remaining inputs on subsequent banks.
 // prettier-ignore
 // let INPUT_TRACK_ORDER = [16, 17, 18, 19, 20, 21, 22, 23, [14, 15], 9, 7, 8, [10, 11], [12, 13], 0, 1, 2, 4, 5, 6];
 let INPUT_TRACK_ORDER = [];
-
 // Bus master order on Console 1 (1-based bus numbers).
 // Supports stereo-linked pairs by grouping two MS bus channels into one Console 1 track.
-// Requested order:
-//   1, 2, 7+8, 3, 9+10, 13+14, 4, then the rest (optionally with 5+6 grouped if linked).
 // prettier-ignore
 // let BUS_TRACK_ORDER = [1, 2, [7, 8], 3, [9, 10], [13, 14], 4, [5, 6]];
 let BUS_TRACK_ORDER = [];
 
-// --- Bridge configuration loading ---
+// ###################################
+// ###### BRIDGE CONFIG LOADING ######
+// ###################################
 /**
  * Load bridge configuration from JSON file and environment variables.
  *
@@ -253,7 +260,9 @@ function loadBridgeConfig() {
 
 loadBridgeConfig();
 
-// --- Live runtime config apply/resync ---
+// ###################################
+// ####### LIVE RUNTIME CONFIG #######
+// ###################################
 /**
  * Force a full Console 1 re-sync.
  *
@@ -374,10 +383,8 @@ function applyRuntimeConfigAndResync(cfg, reason = "config apply") {
     connectMixingStationWebSocket();
     return { changed: true, reconnected: true, resynced: false };
   }
-
   // Otherwise: rebuild layout and force a full Console 1 re-sync so names/colors/mappings refresh.
   rebuildTrackLayout();
-
   // Reset per-track caches so we don't keep stale layout-derived objects. The status/Start
   // bank (objectId 0..START_SLOT_OBJECT_ID) is preserved — see resetRealChannelTrackCache().
   resetRealChannelTrackCache();
@@ -391,7 +398,6 @@ function applyRuntimeConfigAndResync(cfg, reason = "config apply") {
   metering2ParamMsChannels = [];
   msChannelMeterDb.clear();
   initSeenMsChannels = new Set();
-
   // Reset MS subscription bookkeeping so re-subscribing works without restarting.
   // (Subscriptions are per-WS connection; our in-memory map should reflect that.)
   wsDataSubscriptions = {};
@@ -415,7 +421,9 @@ function applyRuntimeConfigAndResync(cfg, reason = "config apply") {
   return { changed: true, reconnected: false, resynced: true, beforeKey: before };
 }
 
-// --- Runtime control channel (stdin from Electron GUI) ---
+// ###################################
+// ##### RUNTIME CONTROL CHANNEL #####
+// ###################################
 /**
  * Listen for newline-delimited JSON control messages on stdin.
  *
@@ -515,7 +523,10 @@ installRuntimeControlChannel();
 // none of it executes at module-load time (only the bootstrap call at the very
 // end does), so ordering here is purely about readability, not correctness.
 // ============================================================================
-// --- Console1 track ID management ---
+
+// ####################################
+// ###### C1 TRACK ID MANAGEMENT ######
+// ####################################
 // Console 1 identifies tracks by `trackId`.
 // Keep them stable for the lifetime of the process (so incremental updates keep working),
 // and ensure they're unique within this process (also across live layout rebuilds).
@@ -551,7 +562,9 @@ function getOrCreateTrackIdForObjectId(objectId) {
   return id;
 }
 
-// --- Track layout state & sends mode ---
+// ####################################
+// ########### TRACK LAYOUT ###########
+// ####################################
 /** @type {TrackLayoutSlot[]} */
 let trackLayout = [];
 /** @type {Map<number, number[]>} */
@@ -695,6 +708,10 @@ function requestMixingStationValue(path, format) {
   sendToMixingStationWS({ path: `/console/data/get/${path}/${format}`, method: "GET" });
 }
 
+/**
+ * Refresh input channels for sends mode.
+ * @param {number} msSendIndex - The send index to refresh.
+ */
 function refreshInputsForSendsMode(msSendIndex) {
   if (!Number.isInteger(msSendIndex)) return;
   for (let ch = 0; ch < INPUT_CHANNEL_COUNT; ch++) {
@@ -703,6 +720,9 @@ function refreshInputsForSendsMode(msSendIndex) {
   }
 }
 
+/**
+ * Refresh input channels for standard mode.
+ */
 function refreshInputsForStandardMode() {
   for (let ch = 0; ch < INPUT_CHANNEL_COUNT; ch++) {
     requestMixingStationValue(`ch.${ch}.mix.on`, "val");
@@ -710,6 +730,9 @@ function refreshInputsForStandardMode() {
   }
 }
 
+/**
+ * Apply standard mute and pan settings to input channels from the cache.
+ */
 function applyStandardMutePanToInputsFromCache() {
   for (let objectId = 0; objectId < trackLayout.length; objectId++) {
     const slot = trackLayout[objectId];
@@ -778,7 +801,9 @@ function setSendsMode(nextMsSendIndex) {
   }
 }
 
-// --- Metering (Mixing Station metering2) ---
+// ####################################
+// ############# METERING #############
+// ####################################
 /** @type {number[]} Maps metering v[] index -> MS channel index */
 let metering2ParamMsChannels = [];
 
@@ -837,6 +862,10 @@ function updateMetering2Subscription() {
   });
 }
 
+/**
+ * Apply metering updates for the given MS channels.
+ * @param {number[]} msChannels
+ */
 function applyMeterUpdatesForMsChannels(msChannels) {
   /** @type {Set<number>} */
   const affectedObjectIds = new Set();
@@ -979,7 +1008,9 @@ function handleMeteringMessage(msg) {
   if (changedMsChannels.length > 0) applyMeterUpdatesForMsChannels(changedMsChannels);
 }
 
-// --- Mixing Station writes ---
+// ###################################
+// ############ MS WRITES ############
+// ###################################
 // Coalesce fast Console1 -> Mixing Station updates (faders, pans) to avoid WS spam.
 const MS_WRITE_FLUSH_MS = 15;
 let msWriteFlushTimer = null;
@@ -1022,7 +1053,9 @@ function queueMsWrite(msPath, value, format = "val") {
   }, MS_WRITE_FLUSH_MS);
 }
 
-// --- Mixing Station data subscriptions ---
+// ###################################
+// ###### MS DATA SUBSCRIPTIONS ######
+// ###################################
 /**
  * Active Mixing Station data subscriptions keyed by `${path}|${format}`.
  * @type {Record<string, {path: string, format: string, timestamp: number}>}
@@ -1091,7 +1124,9 @@ function unsubscribeFromChannelData(path, format) {
   delete wsDataSubscriptions[subKey];
 }
 
-// --- Track layout building ---
+// ###################################
+// ###### TRACK LAYOUT BUILDING ######
+// ###################################
 /**
  * Build the Console 1 track layout.
  *
@@ -1246,7 +1281,9 @@ function rebuildTrackLayout() {
   objectIdsByMsChannel = map;
 }
 
-// --- OSD enable state ---
+// ###################################
+// ############ OSD STATE ############
+// ###################################
 let osdEnabled = false;
 
 /**
@@ -1267,7 +1304,9 @@ function disableOSD() {
   osdEnabled = false;
 }
 
-// --- Console1 Fader MIDI port management ---
+// ###################################
+// ##### C1 MIDI PORT MANAGEMENT #####
+// ###################################
 /**
  * Finds and opens the first MIDI input port matching Console 1 Fader Mk III DAW or MIDI.
  * Ensures SysEx, timing, and active sensing messages are not ignored.
@@ -1371,7 +1410,9 @@ function waitForConsole1MidiPorts() {
   });
 }
 
-// --- Mixing Station WebSocket connection ---
+// ###################################
+// ##### MS WEBSOCKET CONNECTION #####
+// ###################################
 let msWebSocket;
 let wsReconnectTimeout = null;
 let wsHeartbeatInterval = null;
@@ -1631,7 +1672,9 @@ function sendToMixingStationWS(msg) {
   }
 }
 
-// --- Track cache (Console1 OSD track objects) ---
+// ###################################
+// ########### TRACK CACHE ###########
+// ###################################
 /**
  * Fast lookup from Console 1 `trackId` to our internal `objectId`.
  * Rebuilt as tracks are (re)created.
@@ -1830,7 +1873,9 @@ function getObjectIdForTrackId(trackId) {
   return undefined;
 }
 
-// --- Status/Start bank (bank 0) display ---
+// ###################################
+// ######## STATUS/START BANK ########
+// ###################################
 /**
  * Update the 7 status indicator slots' colors from a live status snapshot (Feature A's
  * `computeStatus()` shape, forwarded from the GUI via `status:update`). Applies regardless
@@ -1931,7 +1976,9 @@ function deactivateRealChannelTracks(forceSend = false) {
   }
 }
 
-// --- Bridge lifecycle (standby/running) ---
+// ####################################
+// ######### BRIDGE LIFECYCLE #########
+// ####################################
 /**
  * Bridge lifecycle state (distinct from the unrelated "Standard"/"Sends" mode concept
  * tracked via `setSendsMode`/console logs prefixed `[Mode]` — this one uses `[Lifecycle]`).
@@ -1987,7 +2034,9 @@ function enterRunningState(config) {
   applyStartSlotDisplay();
 }
 
-// --- Applying Mixing Station updates to cached tracks ---
+// ####################################
+// ############ MS UPDATES ############
+// ####################################
 // Suppress echo when we set a value in MS and MS immediately broadcasts it back.
 // Keep this small; we delete entries as soon as we suppress the first matching echo.
 const MS_ECHO_SUPPRESS_MS = 150;
@@ -2115,7 +2164,9 @@ function noteMsWrite(msKey, value) {
   recentMsWrites.set(msKey, { value, ts: Date.now() });
 }
 
-// --- Console1 update queue (batched SysEx sends) ---
+// ###################################
+// ######### C1 UPDATE QUEUE #########
+// ###################################
 // Batch incremental updates to Console 1 to avoid SysEx spam.
 const CONSOLE1_FLUSH_MS = 20;
 let console1FlushTimer = null;
@@ -2180,7 +2231,9 @@ function queueConsole1TrackUpdate(trackId, partial, opts = {}) {
   }, CONSOLE1_FLUSH_MS);
 }
 
-// --- Initialization / full resync ---
+// ####################################
+// ########## INITIALIZATION ##########
+// ####################################
 // Initial bootstrap can stall if some channels never report; use a timeout flush.
 const INIT_FLUSH_TIMEOUT_MS = 2500;
 let initFlushTimeoutId = null;
@@ -2283,7 +2336,9 @@ function scheduleConsole1FullResync(reason) {
   initFlushTimeoutId = setTimeout(() => finalizeInitialization(reason), delay);
 }
 
-// --- Sending SysEx to Console1 ---
+// ###################################
+// ########### SYSEX TO C1 ###########
+// ###################################
 /**
  * Sends a JSON object as a SysEx message to Console 1 via MIDI output.
  * Handles encoding, escaping, and -Infinity serialization.
@@ -2428,7 +2483,9 @@ function batchSendChangedMeters() {
   }
 }
 
-// --- Console1 control messages (RESET/ENABLE/DISABLE/handshake ack/activeMeters) ---
+// ###################################
+// ####### C1 CONTROL MESSAGES #######
+// ###################################
 /**
  * Handle Console 1 control messages (ENABLE/DISABLE/RESET/handshake ack).
  *
@@ -2494,7 +2551,9 @@ function handleConsole1ControlJson(parsed) {
   }
 }
 
-// --- Handling Mixing Station WebSocket messages ---
+// ###################################
+// #### MS WEBSOCKET MSG HANDLING ####
+// ###################################
 /**
  * Extract a `/console/data/get/ch.<n>.<param>/<format>` update from a WS message.
  *
@@ -2807,7 +2866,9 @@ function handleWSMessage(data) {
   }
 }
 
-// --- Handling Console1 MIDI messages (track parameter updates) ---
+// ####################################
+// ####### C1 MIDI MSG HANDLING #######
+// ####################################
 /**
  * Parses a SysEx MIDI message and extracts the JSON payload.
  * @param {number[]} message - MIDI message bytes.
@@ -3395,7 +3456,9 @@ function onConsole1MidiInputMessage(deltaTime, message) {
   }
 }
 
-// --- Shutdown ---
+// ####################################
+// ############# SHUTDOWN #############
+// ####################################
 /**
  * Sets up handlers for graceful application shutdown on SIGINT (CTRL+C) and SIGTERM signals.
  *
@@ -3460,7 +3523,9 @@ function setupShutdownHandler() {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-// --- Bootstrap ---
+// ###################################
+// ############ BOOTSTRAP ############
+// ###################################
 async function startBridgeProcess() {
   setupShutdownHandler();
   await waitForConsole1MidiPorts();
