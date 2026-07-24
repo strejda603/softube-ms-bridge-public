@@ -242,8 +242,8 @@ let CONSOLE1_MAIN_COLOR = 0x00a5ff; // Orange-ish (r=255,g=165,b=0)
 let CONSOLE1_BUS_COLOR = 0x800080; // Purple (r=128,g=0,b=128)
 // Status/Start bank (bank 0) colors. Not user-configurable (unlike the two above), since
 // this bank's contents are fixed by the feature, not by the user's channel layout.
-const CONSOLE1_START_COLOR = 0xff841b;
-const CONSOLE1_STOP_COLOR = 0x5a28f8; // Pure red (matches MS_PALETTE_BASE_COLORS[1] "Red")
+const CONSOLE1_START_COLOR = 0xff841b; // Blue (like "primary" in Bootstrap 5 palette)
+const CONSOLE1_STOP_COLOR = 0x5a28f8; // Red (like "danger" in Bootstrap 5 palette)
 const CONSOLE1_STATUS_ON_COLOR = 0x00ff00; // Pure green (matches MS_PALETTE_BASE_COLORS[2] "Green")
 const CONSOLE1_STATUS_OFF_COLOR = 0x0000ff; // Pure red — same value as CONSOLE1_STOP_COLOR, distinct constant
 
