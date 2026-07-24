@@ -1,19 +1,3 @@
-/**
- * Softube Console 1 <-> Mixing Station Bridge
- *
- * Listens for SysEx MIDI messages from Softube Console 1, parses JSON payloads,
- * and sends corresponding commands to Mixing Station via WebSocket.
- *
- * Usage:
- *   1. Install Mixing Station and Softube Console 1 software.
- *   2. Install Node.js and dependencies: `npm install`.
- *   3. Connect Softube Console 1 (Fader Mk III) to your computer via USB.
- *   4. Start Mixing Station with WebSocket API enabled (default ws://localhost:8080).
- *   5. Run this script: `node index.js` or `npm run gui` for GUI mode.
- *
- * Author: Strejda603
- */
-
 let midi;
 try {
   midi = require("@julusian/midi");
@@ -57,50 +41,13 @@ const NUMBER_OF_SENDS = 6; // Console 1 has 6 send slots
 let LOG_JSON = false; // Set to true to log all JSON messages to/from Mixing Station
 let LOG_METERING = false; // Set to true to log metering subscription + incoming metering frames
 
-// --- Metering (Mixing Station metering2) ---
+// --- Metering (Mixing Station metering2) config ---
 // Console 1 requests meters via `activeMeters`.
 // Mixing Station docs: interval min=30, max=1000 (global per client, last one wins).
 const METERING2_SUBSCRIPTION_ID = 0;
 let METERING2_INTERVAL_MS = 100;
 const METERING2_BINARY = false;
 
-// Console 1 identifies tracks by `trackId`.
-// Keep them stable for the lifetime of the process (so incremental updates keep working),
-// and ensure they're unique within this process (also across live layout rebuilds).
-/** @type {Map<number, string>} objectId -> trackId */
-const trackIdByObjectId = new Map();
-/** @type {Set<string>} */
-const usedTrackIds = new Set();
-
-// --- Console1 track ID management ---
-/** @returns {string} 8-hex uppercase */
-function generateUniqueTrackId8Hex() {
-  // 32-bit random => 8 hex chars.
-  // Collision odds are extremely low; still guard with a Set.
-  while (true) {
-    const id = crypto.randomBytes(4).toString("hex").toUpperCase();
-    if (!usedTrackIds.has(id)) {
-      usedTrackIds.add(id);
-      return id;
-    }
-  }
-}
-
-/**
- * Get or create a stable, unique trackId for a layout slot.
- *
- * @param {number} objectId
- * @returns {string}
- */
-function getOrCreateTrackIdForObjectId(objectId) {
-  const hit = trackIdByObjectId.get(objectId);
-  if (hit) return hit;
-  const id = generateUniqueTrackId8Hex();
-  trackIdByObjectId.set(objectId, id);
-  return id;
-}
-
-// --- Global state ---
 // --- Track layout config ---
 // Mixing Station channel architecture can be discovered via `/console/information`.
 // Defaults match Behringer X32-style layouts and are used as fallbacks.
@@ -116,123 +63,6 @@ let BUS_CHANNEL_START = 48; // Bus channels 48..63
 let BUS_CHANNEL_COUNT = 16;
 let MAIN_STEREO_CHANNELS = [70, 71]; // Main L/R
 
-/**
- * Runtime console architecture info (from `/console/information`).
- * We only apply it when explicitly requested during a WS connect, to avoid
- * changing channel mapping mid-session.
- */
-let consoleInfoRequestState = { pending: false, accepted: false, resolve: null };
-
-// --- Console architecture info (/console/information) ---
-/**
- * Apply Mixing Station `/console/information` response to our channel constants.
- * Uses best-effort heuristics and keeps existing defaults as fallback.
- *
- * @param {{totalChannels?:number, channelTypes?:Array<any>}} info
- */
-function applyConsoleInformation(info) {
-  if (!info || typeof info !== "object") return;
-
-  const total = Number(info.totalChannels);
-  if (Number.isFinite(total) && total > 0) MS_TOTAL_CHANNELS = total;
-
-  const types = Array.isArray(info.channelTypes) ? info.channelTypes : [];
-  const findType = (re) =>
-    types.find(
-      (t) =>
-        t &&
-        (re.test(String(t.name || "")) || re.test(String(t.shortName || ""))) &&
-        Number.isFinite(Number(t.offset)) &&
-        Number.isFinite(Number(t.count)) &&
-        Number(t.count) > 0,
-    );
-
-  // Inputs: prefer the type named like "Input" with offset 0 if available.
-  const inputCandidates = types
-    .filter(
-      (t) =>
-        t &&
-        (/\binput\b|\bch\b/i.test(String(t.name || "")) ||
-          /\binput\b|\bch\b/i.test(String(t.shortName || ""))) &&
-        Number.isFinite(Number(t.offset)) &&
-        Number.isFinite(Number(t.count)) &&
-        Number(t.count) > 0,
-    )
-    .sort((a, b) => Number(a.offset) - Number(b.offset));
-  const inputType = inputCandidates.find((t) => Number(t.offset) === 0) || inputCandidates[0];
-  if (inputType) {
-    const inputOffset = Number(inputType.offset);
-    const inputCount = Number(inputType.count);
-    // Bridge currently assumes inputs are indexed from 0.
-    if (inputOffset === 0 && Number.isFinite(inputCount) && inputCount > 0) {
-      INPUT_CHANNEL_COUNT = inputCount;
-    }
-  }
-
-  // Buses.
-  const busType = findType(/\bbus\b/i);
-  if (busType) {
-    const off = Number(busType.offset);
-    const cnt = Number(busType.count);
-    if (Number.isFinite(off) && off >= 0) BUS_CHANNEL_START = off;
-    if (Number.isFinite(cnt) && cnt > 0) BUS_CHANNEL_COUNT = cnt;
-  }
-
-  // Main.
-  const mainType = findType(/\bmain\b/i);
-  if (mainType) {
-    const off = Number(mainType.offset);
-    const cnt = Number(mainType.count);
-    if (Number.isFinite(off) && off >= 0 && Number.isFinite(cnt) && cnt > 0) {
-      MAIN_STEREO_CHANNELS = cnt >= 2 ? [off, off + 1] : [off];
-    }
-  }
-
-  if (LOG_JSON) {
-    console.log(
-      `[ConsoleInfo] total=${MS_TOTAL_CHANNELS} inputs=0..${INPUT_CHANNEL_COUNT - 1} bus=${BUS_CHANNEL_START}..${BUS_CHANNEL_START + BUS_CHANNEL_COUNT - 1} main=${MAIN_STEREO_CHANNELS.join(",")}`,
-    );
-  }
-}
-
-/**
- * Fetch `/console/information` once and apply it before building subscriptions.
- * Resolves even on timeout/failure (keeps fallbacks).
- *
- * @param {number} timeoutMs
- */
-function fetchAndApplyConsoleInformation(timeoutMs = 500) {
-  if (!msWebSocket || msWebSocket.readyState !== WebSocket.OPEN) {
-    return Promise.resolve(false);
-  }
-  if (consoleInfoRequestState.pending) return Promise.resolve(false);
-
-  consoleInfoRequestState.pending = true;
-  consoleInfoRequestState.accepted = false;
-
-  return new Promise((resolve) => {
-    consoleInfoRequestState.resolve = (ok) => {
-      if (!consoleInfoRequestState.pending) return;
-      consoleInfoRequestState.pending = false;
-      consoleInfoRequestState.accepted = !!ok;
-      consoleInfoRequestState.resolve = null;
-      resolve(!!ok);
-    };
-
-    sendToMixingStationWS({ path: "/console/information", method: "GET" });
-
-    setTimeout(() => {
-      if (
-        consoleInfoRequestState.pending &&
-        typeof consoleInfoRequestState.resolve === "function"
-      ) {
-        // Timeout: proceed with fallbacks and ignore any late reply.
-        consoleInfoRequestState.resolve(false);
-      }
-    }, timeoutMs);
-  });
-}
-
 // --- Console1 colors ---
 // Console 1-only colors for non-input "virtual" tracks.
 // These are intentionally NOT part of Mixing Station's 16-color palette (`baseColors`/styleClass).
@@ -246,9 +76,6 @@ const CONSOLE1_START_COLOR = 0xff841b; // Blue (like "primary" in Bootstrap 5 pa
 const CONSOLE1_STOP_COLOR = 0x5a28f8; // Red (like "danger" in Bootstrap 5 palette)
 const CONSOLE1_STATUS_ON_COLOR = 0x00ff00; // Pure green (matches MS_PALETTE_BASE_COLORS[2] "Green")
 const CONSOLE1_STATUS_OFF_COLOR = 0x0000ff; // Pure red — same value as CONSOLE1_STOP_COLOR, distinct constant
-
-// Mixing Station color mapping (palette index / styleClass / RGB int -> Softube 24-bit int)
-// lives in `midiColorUtils.js` (pure, unit-tested) and is imported above.
 
 // --- Console1 <-> Mixing Station send mapping ---
 // Console 1 -> Mixing Station send mapping.
@@ -345,26 +172,6 @@ let INPUT_TRACK_ORDER = [];
 let BUS_TRACK_ORDER = [];
 
 // --- Bridge configuration loading ---
-/**
- * Bridge configuration (as persisted by the GUI and/or config file).
- *
- * Notes on indexing:
- * - `inputTrackOrder` uses 0-based input channel indices.
- * - `busTrackOrder` uses 1-based bus numbers.
- * - Stereo groups are expressed as `[left,right]` pairs.
- * - `c1SendToMsBusNumber` maps Console 1 Send1..Send6 to *1-based* bus numbers.
- *
- * @typedef {object} BridgeConfig
- * @property {string} [mixingStationWsUrl]
- * @property {boolean} [logJson]
- * @property {(number|number[])[]} [inputTrackOrder]
- * @property {(number|number[])[]} [busTrackOrder]
- * @property {number[]} [c1SendToMsBusNumber]
- * @property {number} [metering2IntervalMs]
- * @property {number} [console1MainColor]
- * @property {number} [console1BusColor]
- */
-
 /**
  * Load bridge configuration from JSON file and environment variables.
  *
@@ -703,15 +510,48 @@ function installRuntimeControlChannel() {
 
 installRuntimeControlChannel();
 
-/**
- * @typedef {object} TrackLayoutSlot
- * @property {number} objectId - 0-based slot index used internally
- * @property {"input"|"bus"|"main"|"empty"} kind
- * @property {number[]} msChannels - One channel (mono) or two channels (stereo pair)
- * @property {number|null} msPrimary - Preferred channel for reading name/color/level
- * @property {boolean} [panLocked] - Marks stereo-linked pairs; pan knob writes affect both channels
- */
+// ============================================================================
+// Everything below this line is free-standing function/state declarations —
+// none of it executes at module-load time (only the bootstrap call at the very
+// end does), so ordering here is purely about readability, not correctness.
+// ============================================================================
+// --- Console1 track ID management ---
+// Console 1 identifies tracks by `trackId`.
+// Keep them stable for the lifetime of the process (so incremental updates keep working),
+// and ensure they're unique within this process (also across live layout rebuilds).
+/** @type {Map<number, string>} objectId -> trackId */
+const trackIdByObjectId = new Map();
+/** @type {Set<string>} */
+const usedTrackIds = new Set();
 
+/** @returns {string} 8-hex uppercase */
+function generateUniqueTrackId8Hex() {
+  // 32-bit random => 8 hex chars.
+  // Collision odds are extremely low; still guard with a Set.
+  while (true) {
+    const id = crypto.randomBytes(4).toString("hex").toUpperCase();
+    if (!usedTrackIds.has(id)) {
+      usedTrackIds.add(id);
+      return id;
+    }
+  }
+}
+
+/**
+ * Get or create a stable, unique trackId for a layout slot.
+ *
+ * @param {number} objectId
+ * @returns {string}
+ */
+function getOrCreateTrackIdForObjectId(objectId) {
+  const hit = trackIdByObjectId.get(objectId);
+  if (hit) return hit;
+  const id = generateUniqueTrackId8Hex();
+  trackIdByObjectId.set(objectId, id);
+  return id;
+}
+
+// --- Track layout state & sends mode ---
 /** @type {TrackLayoutSlot[]} */
 let trackLayout = [];
 /** @type {Map<number, number[]>} */
@@ -724,7 +564,6 @@ let tracksByObjectId = {};
 let meteredObjectIds = new Set();
 let initSeenMsChannels = new Set();
 
-// --- Sends mode (input controls reflect a selected bus send) ---
 // Sends mode is latched by selecting a Bus master, and cleared by selecting Main.
 // In sends mode, for input tracks:
 // - Console 1 "Mute" button controls `mix.sends.<active>.on` (inverted: false => mute ON)
@@ -843,9 +682,6 @@ function syncBusMainSendSlotsForSendsMode(isActive) {
   }
 }
 
-// Stereo-linked hybrid pan math (`clamp01`, `hybridStereoPanToDualMonoPans`) lives in
-// `panUtils.js` (pure, unit-tested) and is imported above.
-
 /**
  * Request a single value from Mixing Station. This does not subscribe; it only triggers a one-shot update.
  *
@@ -859,15 +695,6 @@ function requestMixingStationValue(path, format) {
   sendToMixingStationWS({ path: `/console/data/get/${path}/${format}`, method: "GET" });
 }
 
-/**
- * Refresh input mute/pan state from the currently active send index.
- *
- * @param {number} msSendIndex - 0..15
- * @example
- * // Entering sends mode for Bus 1 (send index 0)
- * refreshInputsForSendsMode(0);
- */
-
 function refreshInputsForSendsMode(msSendIndex) {
   if (!Number.isInteger(msSendIndex)) return;
   for (let ch = 0; ch < INPUT_CHANNEL_COUNT; ch++) {
@@ -875,13 +702,6 @@ function refreshInputsForSendsMode(msSendIndex) {
     requestMixingStationValue(`ch.${ch}.mix.sends.${msSendIndex}.pan`, "norm");
   }
 }
-
-/**
- * Refresh input mute/pan state from standard channel paths (`mix.on` + `mix.pan`).
- * @example
- * // Leaving sends mode
- * refreshInputsForStandardMode();
- */
 
 function refreshInputsForStandardMode() {
   for (let ch = 0; ch < INPUT_CHANNEL_COUNT; ch++) {
@@ -959,31 +779,11 @@ function setSendsMode(nextMsSendIndex) {
 }
 
 // --- Metering (Mixing Station metering2) ---
-// Console 1 requests meters via `activeMeters` (list of trackIds).
-// We subscribe to Mixing Station metering2 only for MS channels referenced by those requested tracks.
-//
-// Mixing Station metering2 (type 0) returns dB values in websocket messages at `/console/metering2/{id}`.
-// We convert dB -> linear amplitude and then to a peak-style 0..1 value (Cubase reference multiplies by sqrt(2)).
-
-// Metering2 binary payload decoding (`decodeNonPaddedBase64`, `decodeMetering2Binary`) lives
-// in `meteringUtils.js` (pure, unit-tested) and is imported above.
-
 /** @type {number[]} Maps metering v[] index -> MS channel index */
 let metering2ParamMsChannels = [];
 
 /** @type {Map<number, number>} MS channel index -> latest dB value */
 const msChannelMeterDb = new Map();
-
-/**
- * Compute the current meter value for a layout slot.
- *
- * For stereo groups, the max dB across L/R is used.
- *
- * @param {TrackLayoutSlot} slot
- * @returns {number} 0..1 peak-like meter value
- * @example
- * computeSlotMeterNorm(trackLayout[0]);
- */
 
 function computeSlotMeterNorm(slot) {
   if (!slot || !Array.isArray(slot.msChannels) || slot.msChannels.length === 0) return 0;
@@ -1036,12 +836,6 @@ function updateMetering2Subscription() {
     },
   });
 }
-
-/**
- * Recompute and push meter values for all Console 1 tracks affected by the given MS channels.
- *
- * @param {number[]} msChannels
- */
 
 function applyMeterUpdatesForMsChannels(msChannels) {
   /** @type {Set<number>} */
@@ -1185,57 +979,13 @@ function handleMeteringMessage(msg) {
   if (changedMsChannels.length > 0) applyMeterUpdatesForMsChannels(changedMsChannels);
 }
 
-// Initial bootstrap can stall if some channels never report; use a timeout flush.
-const INIT_FLUSH_TIMEOUT_MS = 2500;
-let initFlushTimeoutId = null;
-let hasSentInitialTrackDump = false;
-
-// Batch incremental updates to Console 1 to avoid SysEx spam.
-const CONSOLE1_FLUSH_MS = 20;
-let console1FlushTimer = null;
-/** @type {Map<string, object>} trackId -> partial track update */
-const console1UpdateQueue = new Map();
-
-// Suppress echo when we set a value in MS and MS immediately broadcasts it back.
-// Keep this small; we delete entries as soon as we suppress the first matching echo.
-const MS_ECHO_SUPPRESS_MS = 150;
-/** @type {Map<string, {value:any, ts:number}>} */
-const recentMsWrites = new Map();
-
+// --- Mixing Station writes ---
 // Coalesce fast Console1 -> Mixing Station updates (faders, pans) to avoid WS spam.
 const MS_WRITE_FLUSH_MS = 15;
 let msWriteFlushTimer = null;
 /** @type {Map<string, any>} */
 const msWriteQueue = new Map();
 
-/**
- * Active Mixing Station data subscriptions keyed by `${path}|${format}`.
- * @type {Record<string, {path: string, format: string, timestamp: number}>}
- */
-let wsDataSubscriptions = {};
-let osdEnabled = false;
-
-/**
- * Bridge lifecycle state (distinct from the unrelated "Standard"/"Sends" mode concept
- * tracked via `setSendsMode`/console logs prefixed `[Mode]` — this one uses `[Lifecycle]`).
- * - `"standby"`: Console 1 Fader MIDI held, status/Start bank shown, no Mixing Station connection.
- * - `"running"`: full bridging active (today's original behavior), plus the status/Start bank.
- * @type {"standby"|"running"}
- */
-let bridgeLifecycle = "standby";
-
-/**
- * Fast lookup from Console 1 `trackId` to our internal `objectId`.
- * Rebuilt as tracks are (re)created.
- * @type {Map<string, number>}
- */
-let objectIdByTrackId = new Map();
-
-// dB/-Infinity normalization (`isNegativeInfinityDb`, `normalizeConsole1LevelForMs`) and
-// stereo name-suffix trimming (`trimStereoSuffixFromName`) live in `valueCoercion.js`
-// (pure, unit-tested) and are imported above.
-
-// --- Mixing Station writes & subscriptions ---
 /**
  * Queue a write to Mixing Station.
  *
@@ -1272,6 +1022,13 @@ function queueMsWrite(msPath, value, format = "val") {
   }, MS_WRITE_FLUSH_MS);
 }
 
+// --- Mixing Station data subscriptions ---
+/**
+ * Active Mixing Station data subscriptions keyed by `${path}|${format}`.
+ * @type {Record<string, {path: string, format: string, timestamp: number}>}
+ */
+let wsDataSubscriptions = {};
+
 /**
  * Subscribes to all Mixing Station data needed to drive the Console 1 OSD.
  * Uses the current send mapping to only subscribe to required send indices.
@@ -1292,6 +1049,46 @@ function subscribeToRequiredChannelData() {
     subscribeToChannelData(`ch.*.mix.sends.${msSendIndex}.lvl`, "val");
     subscribeToChannelData(`ch.*.mix.sends.${msSendIndex}.on`, "val");
   }
+}
+
+/**
+ * Subscribe to channel data updates from Mixing Station.
+ * @param {string} path
+ * @param {string} format
+ */
+function subscribeToChannelData(path, format) {
+  const subKey = `${path}|${format}`;
+  if (wsDataSubscriptions[subKey]) return; // Already subscribed
+
+  const req = {
+    path: "/console/data/subscribe",
+    method: "POST",
+    body: { path: path, format: format },
+  };
+  sendToMixingStationWS(req);
+  wsDataSubscriptions[subKey] = {
+    path: path,
+    format: format,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Unsubscribe from channel data updates.
+ * @param {string} path
+ * @param {string} format
+ */
+function unsubscribeFromChannelData(path, format) {
+  const subKey = `${path}|${format}`;
+  if (!wsDataSubscriptions[subKey]) return; // Not subscribed
+
+  const req = {
+    path: "/console/data/unsubscribe",
+    method: "POST",
+    body: { path: path, format: format },
+  };
+  sendToMixingStationWS(req);
+  delete wsDataSubscriptions[subKey];
 }
 
 // --- Track layout building ---
@@ -1450,6 +1247,8 @@ function rebuildTrackLayout() {
 }
 
 // --- OSD enable state ---
+let osdEnabled = false;
+
 /**
  * Enables On-Screen Display (OSD) integration.
  * @example
@@ -1578,36 +1377,268 @@ let wsReconnectTimeout = null;
 let wsHeartbeatInterval = null;
 
 /**
- * Track object format required by Console 1 OSD.
- * @typedef {object} TrackInfo
- * @property {number} track - 1-based track number shown on Console 1
- * @property {boolean} isActive
- * @property {string} trackId - Unique ID used by Console 1 for updates
- * @property {number} color - 24-bit Softube color int (r in LSB)
- * @property {string} name
- * @property {number|string} volume - dB value, or -Infinity (serialized as "-Infinity")
- * @property {number[]} meter - Normalized meters (usually length 1)
- * @property {boolean} mute - In standard mode: channel mute. In sends mode: derived LED state (!sendOn).
- * @property {boolean} solo
- * @property {boolean} selected
- * @property {number} maxVolumeValue
- * @property {number} maxSendValue
- * @property {number} pan - 0..1 where 0.5 is center
- * @property {boolean} send1On
- * @property {number|string} send1
- * @property {boolean} send2On
- * @property {number|string} send2
- * @property {boolean} send3On
- * @property {number|string} send3
- * @property {boolean} send4On
- * @property {number|string} send4
- * @property {boolean} send5On
- * @property {number|string} send5
- * @property {boolean} send6On
- * @property {number|string} send6
+ * Runtime console architecture info (from `/console/information`).
+ * We only apply it when explicitly requested during a WS connect, to avoid
+ * changing channel mapping mid-session.
  */
+let consoleInfoRequestState = { pending: false, accepted: false, resolve: null };
+
+/**
+ * Apply Mixing Station `/console/information` response to our channel constants.
+ * Uses best-effort heuristics and keeps existing defaults as fallback.
+ *
+ * @param {{totalChannels?:number, channelTypes?:Array<any>}} info
+ */
+function applyConsoleInformation(info) {
+  if (!info || typeof info !== "object") return;
+
+  const total = Number(info.totalChannels);
+  if (Number.isFinite(total) && total > 0) MS_TOTAL_CHANNELS = total;
+
+  const types = Array.isArray(info.channelTypes) ? info.channelTypes : [];
+  const findType = (re) =>
+    types.find(
+      (t) =>
+        t &&
+        (re.test(String(t.name || "")) || re.test(String(t.shortName || ""))) &&
+        Number.isFinite(Number(t.offset)) &&
+        Number.isFinite(Number(t.count)) &&
+        Number(t.count) > 0,
+    );
+
+  // Inputs: prefer the type named like "Input" with offset 0 if available.
+  const inputCandidates = types
+    .filter(
+      (t) =>
+        t &&
+        (/\binput\b|\bch\b/i.test(String(t.name || "")) ||
+          /\binput\b|\bch\b/i.test(String(t.shortName || ""))) &&
+        Number.isFinite(Number(t.offset)) &&
+        Number.isFinite(Number(t.count)) &&
+        Number(t.count) > 0,
+    )
+    .sort((a, b) => Number(a.offset) - Number(b.offset));
+  const inputType = inputCandidates.find((t) => Number(t.offset) === 0) || inputCandidates[0];
+  if (inputType) {
+    const inputOffset = Number(inputType.offset);
+    const inputCount = Number(inputType.count);
+    // Bridge currently assumes inputs are indexed from 0.
+    if (inputOffset === 0 && Number.isFinite(inputCount) && inputCount > 0) {
+      INPUT_CHANNEL_COUNT = inputCount;
+    }
+  }
+
+  // Buses.
+  const busType = findType(/\bbus\b/i);
+  if (busType) {
+    const off = Number(busType.offset);
+    const cnt = Number(busType.count);
+    if (Number.isFinite(off) && off >= 0) BUS_CHANNEL_START = off;
+    if (Number.isFinite(cnt) && cnt > 0) BUS_CHANNEL_COUNT = cnt;
+  }
+
+  // Main.
+  const mainType = findType(/\bmain\b/i);
+  if (mainType) {
+    const off = Number(mainType.offset);
+    const cnt = Number(mainType.count);
+    if (Number.isFinite(off) && off >= 0 && Number.isFinite(cnt) && cnt > 0) {
+      MAIN_STEREO_CHANNELS = cnt >= 2 ? [off, off + 1] : [off];
+    }
+  }
+
+  if (LOG_JSON) {
+    console.log(
+      `[ConsoleInfo] total=${MS_TOTAL_CHANNELS} inputs=0..${INPUT_CHANNEL_COUNT - 1} bus=${BUS_CHANNEL_START}..${BUS_CHANNEL_START + BUS_CHANNEL_COUNT - 1} main=${MAIN_STEREO_CHANNELS.join(",")}`,
+    );
+  }
+}
+
+/**
+ * Fetch `/console/information` once and apply it before building subscriptions.
+ * Resolves even on timeout/failure (keeps fallbacks).
+ *
+ * @param {number} timeoutMs
+ */
+function fetchAndApplyConsoleInformation(timeoutMs = 500) {
+  if (!msWebSocket || msWebSocket.readyState !== WebSocket.OPEN) {
+    return Promise.resolve(false);
+  }
+  if (consoleInfoRequestState.pending) return Promise.resolve(false);
+
+  consoleInfoRequestState.pending = true;
+  consoleInfoRequestState.accepted = false;
+
+  return new Promise((resolve) => {
+    consoleInfoRequestState.resolve = (ok) => {
+      if (!consoleInfoRequestState.pending) return;
+      consoleInfoRequestState.pending = false;
+      consoleInfoRequestState.accepted = !!ok;
+      consoleInfoRequestState.resolve = null;
+      resolve(!!ok);
+    };
+
+    sendToMixingStationWS({ path: "/console/information", method: "GET" });
+
+    setTimeout(() => {
+      if (
+        consoleInfoRequestState.pending &&
+        typeof consoleInfoRequestState.resolve === "function"
+      ) {
+        // Timeout: proceed with fallbacks and ignore any late reply.
+        consoleInfoRequestState.resolve(false);
+      }
+    }, timeoutMs);
+  });
+}
+
+/**
+ * Establishes and maintains a WebSocket connection to Mixing Station.
+ * Handles auto-reconnect and keep-alive.
+ * @example
+ * connectMixingStationWebSocket();
+ */
+function connectMixingStationWebSocket() {
+  if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
+    msWebSocket.close();
+  }
+  msWebSocket = new WebSocket(MIXING_STATION_WS_URL);
+  // Captured so the close handler below can tell a stale socket's close event (e.g. the
+  // just-closed previous connection, if its "close" fires after this new one is already
+  // assigned to `msWebSocket`) from the current socket's own close — an unguarded stale
+  // close event would otherwise schedule a spurious extra reconnect.
+  const socket = msWebSocket;
+
+  socket.on("open", async () => {
+    console.log("Connected to Mixing Station WebSocket");
+
+    // Best-effort: discover mixer channel architecture before building the layout/subscriptions.
+    // If this times out or fails, we proceed with the built-in defaults.
+    try {
+      await fetchAndApplyConsoleInformation(600);
+    } catch {
+      // ignore
+    }
+
+    // Standby may have been entered while this await was in flight (e.g. Start then Stop
+    // within the ~600ms console-information round trip). Same standby-leak concern as the
+    // other guards in this file: resetting init state / scheduling finalizeInitialization
+    // below would re-activate real channel tracks during standby. Bail out and let the
+    // (already-triggered) close handle teardown.
+    if (bridgeLifecycle !== "running") {
+      try {
+        msWebSocket.close();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    // Reset init state on each connect/reconnect. The status/Start bank (objectId
+    // 0..START_SLOT_OBJECT_ID) is preserved — see resetRealChannelTrackCache().
+    rebuildTrackLayout();
+    isInitializing = true;
+    initMessageBuffer = [];
+    resetRealChannelTrackCache();
+    meteredObjectIds = new Set();
+    metering2ParamMsChannels = [];
+    msChannelMeterDb.clear();
+    objectIdByTrackId = new Map();
+    initSeenMsChannels = new Set();
+    hasSentInitialTrackDump = false;
+
+    // Reset subscription bookkeeping so we re-subscribe on each new WS connection.
+    wsDataSubscriptions = {};
+    sendsModeMsSendIndex = null;
+    sendsModeSubscribedMsSendIndex = null;
+    inputSendState = new Map();
+
+    if (initFlushTimeoutId) clearTimeout(initFlushTimeoutId);
+    initFlushTimeoutId = setTimeout(() => finalizeInitialization("timeout"), INIT_FLUSH_TIMEOUT_MS);
+
+    subscribeToRequiredChannelData();
+    disableOSD();
+    startHandshake();
+    console.log("Console 1 handshake sent.");
+    if (wsReconnectTimeout) {
+      clearTimeout(wsReconnectTimeout);
+      wsReconnectTimeout = null;
+    }
+    // Start heartbeat/keep-alive every 4 seconds
+    if (wsHeartbeatInterval) clearInterval(wsHeartbeatInterval);
+    wsHeartbeatInterval = setInterval(() => {
+      if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
+        sendToMixingStationWS({ path: "/hi/v", method: "GET" });
+      }
+    }, 4000);
+  });
+
+  socket.on("close", () => {
+    // Ignore a stale socket's close event — `msWebSocket` already points at a newer
+    // connection (see the `socket` capture above), so this one's teardown is moot and must
+    // not clear the newer socket's already-running heartbeat/init-flush timers.
+    if (socket !== msWebSocket) return;
+
+    if (wsHeartbeatInterval) {
+      clearInterval(wsHeartbeatInterval);
+      wsHeartbeatInterval = null;
+    }
+    // Clear regardless of branch below: a pending init-flush timeout left over from a very
+    // recent connect (e.g. rapid Start-then-Stop) must not fire during standby — it would
+    // force-send a stale full track dump via `finalizeInitialization()`.
+    if (initFlushTimeoutId) {
+      clearTimeout(initFlushTimeoutId);
+      initFlushTimeoutId = null;
+    }
+
+    // Standby intentionally closes this socket (see enterStandbyState) — don't schedule
+    // the usual auto-reconnect in that case, or standby would silently reconnect ~2s later.
+    if (bridgeLifecycle !== "running") {
+      console.log("Mixing Station WebSocket closed (standby, not reconnecting).");
+      return;
+    }
+
+    const delay = 2000; // fixed 2 seconds
+    console.warn(`Mixing Station WebSocket closed, reconnecting in ${delay / 1000}s...`);
+    if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
+    wsReconnectTimeout = setTimeout(connectMixingStationWebSocket, delay);
+  });
+
+  msWebSocket.on("error", (err) => {
+    console.error("Mixing Station WebSocket error:", err.message);
+    // Don't reconnect here, let 'close' handle it
+  });
+
+  msWebSocket.on("message", (data) => {
+    handleWSMessage(data);
+  });
+}
+
+/**
+ * Sends a message to Mixing Station via WebSocket if connected.
+ * If not connected, the message is dropped (callers may retry later).
+ * @param {object|string} msg - The message object or raw string to send.
+ * @example
+ * sendToMixingStationWS({ path: '/console/data/set/...' });
+ */
+function sendToMixingStationWS(msg) {
+  if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
+    if (typeof msg === "string") {
+      msWebSocket.send(msg);
+    } else {
+      msWebSocket.send(JSON.stringify(msg));
+    }
+  }
+}
 
 // --- Track cache (Console1 OSD track objects) ---
+/**
+ * Fast lookup from Console 1 `trackId` to our internal `objectId`.
+ * Rebuilt as tracks are (re)created.
+ * @type {Map<string, number>}
+ */
+let objectIdByTrackId = new Map();
+
 /**
  * Creates the default Console 1 track object for a given layout slot.
  * @param {number} objectId - Layout slot index (0-based)
@@ -1775,6 +1806,30 @@ function resetRealChannelTrackCache() {
   tracksByObjectId = preserved;
 }
 
+/**
+ * Resolve a Console 1 `trackId` to our internal `objectId`.
+ *
+ * @param {string|number} trackId
+ * @returns {number|undefined}
+ */
+function getObjectIdForTrackId(trackId) {
+  const key = String(trackId);
+  const hit = objectIdByTrackId.get(key);
+  if (hit !== undefined) return hit;
+
+  // Fallback for edge cases where cache was externally mutated.
+  for (const objectIdStr of Object.keys(tracksByObjectId)) {
+    const cached = tracksByObjectId[objectIdStr];
+    if (!cached) continue;
+    if (String(cached.trackId) === key) {
+      const objectId = parseInt(objectIdStr, 10);
+      if (Number.isFinite(objectId)) objectIdByTrackId.set(key, objectId);
+      return objectId;
+    }
+  }
+  return undefined;
+}
+
 // --- Status/Start bank (bank 0) display ---
 /**
  * Update the 7 status indicator slots' colors from a live status snapshot (Feature A's
@@ -1878,6 +1933,15 @@ function deactivateRealChannelTracks(forceSend = false) {
 
 // --- Bridge lifecycle (standby/running) ---
 /**
+ * Bridge lifecycle state (distinct from the unrelated "Standard"/"Sends" mode concept
+ * tracked via `setSendsMode`/console logs prefixed `[Mode]` — this one uses `[Lifecycle]`).
+ * - `"standby"`: Console 1 Fader MIDI held, status/Start bank shown, no Mixing Station connection.
+ * - `"running"`: full bridging active (today's original behavior), plus the status/Start bank.
+ * @type {"standby"|"running"}
+ */
+let bridgeLifecycle = "standby";
+
+/**
  * Enter `standby`: disconnect from Mixing Station (if connected), deactivate the real
  * channel banks' display, and show "Start"/`CONSOLE1_START_COLOR` on the Start slot. The
  * status/Start bank itself stays visible throughout — this is also used as the bridge's
@@ -1924,6 +1988,12 @@ function enterRunningState(config) {
 }
 
 // --- Applying Mixing Station updates to cached tracks ---
+// Suppress echo when we set a value in MS and MS immediately broadcasts it back.
+// Keep this small; we delete entries as soon as we suppress the first matching echo.
+const MS_ECHO_SUPPRESS_MS = 150;
+/** @type {Map<string, {value:any, ts:number}>} */
+const recentMsWrites = new Map();
+
 /**
  * Apply a single Mixing Station update (path + value) onto a cached Console 1 track.
  * Returns a partial object containing only fields that changed.
@@ -2046,6 +2116,12 @@ function noteMsWrite(msKey, value) {
 }
 
 // --- Console1 update queue (batched SysEx sends) ---
+// Batch incremental updates to Console 1 to avoid SysEx spam.
+const CONSOLE1_FLUSH_MS = 20;
+let console1FlushTimer = null;
+/** @type {Map<string, object>} trackId -> partial track update */
+const console1UpdateQueue = new Map();
+
 /**
  * Queue a partial track update to Console 1 (batched + throttled).
  *
@@ -2105,6 +2181,11 @@ function queueConsole1TrackUpdate(trackId, partial, opts = {}) {
 }
 
 // --- Initialization / full resync ---
+// Initial bootstrap can stall if some channels never report; use a timeout flush.
+const INIT_FLUSH_TIMEOUT_MS = 2500;
+let initFlushTimeoutId = null;
+let hasSentInitialTrackDump = false;
+
 /**
  * End the initialization buffering phase and send a single full track dump.
  *
@@ -2202,170 +2283,6 @@ function scheduleConsole1FullResync(reason) {
   initFlushTimeoutId = setTimeout(() => finalizeInitialization(reason), delay);
 }
 
-// --- Mixing Station data subscriptions ---
-/**
- * Subscribe to channel data updates from Mixing Station.
- * @param {string} path
- * @param {string} format
- */
-function subscribeToChannelData(path, format) {
-  const subKey = `${path}|${format}`;
-  if (wsDataSubscriptions[subKey]) return; // Already subscribed
-
-  const req = {
-    path: "/console/data/subscribe",
-    method: "POST",
-    body: { path: path, format: format },
-  };
-  sendToMixingStationWS(req);
-  wsDataSubscriptions[subKey] = {
-    path: path,
-    format: format,
-    timestamp: Date.now(),
-  };
-}
-
-/**
- * Unsubscribe from channel data updates.
- * @param {string} path
- * @param {string} format
- */
-function unsubscribeFromChannelData(path, format) {
-  const subKey = `${path}|${format}`;
-  if (!wsDataSubscriptions[subKey]) return; // Not subscribed
-
-  const req = {
-    path: "/console/data/unsubscribe",
-    method: "POST",
-    body: { path: path, format: format },
-  };
-  sendToMixingStationWS(req);
-  delete wsDataSubscriptions[subKey];
-}
-
-// --- Mixing Station WebSocket connect/reconnect ---
-/**
- * Establishes and maintains a WebSocket connection to Mixing Station.
- * Handles auto-reconnect and keep-alive.
- * @example
- * connectMixingStationWebSocket();
- */
-function connectMixingStationWebSocket() {
-  if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
-    msWebSocket.close();
-  }
-  msWebSocket = new WebSocket(MIXING_STATION_WS_URL);
-  // Captured so the close handler below can tell a stale socket's close event (e.g. the
-  // just-closed previous connection, if its "close" fires after this new one is already
-  // assigned to `msWebSocket`) from the current socket's own close — an unguarded stale
-  // close event would otherwise schedule a spurious extra reconnect.
-  const socket = msWebSocket;
-
-  socket.on("open", async () => {
-    console.log("Connected to Mixing Station WebSocket");
-
-    // Best-effort: discover mixer channel architecture before building the layout/subscriptions.
-    // If this times out or fails, we proceed with the built-in defaults.
-    try {
-      await fetchAndApplyConsoleInformation(600);
-    } catch {
-      // ignore
-    }
-
-    // Standby may have been entered while this await was in flight (e.g. Start then Stop
-    // within the ~600ms console-information round trip). Same standby-leak concern as the
-    // other guards in this file: resetting init state / scheduling finalizeInitialization
-    // below would re-activate real channel tracks during standby. Bail out and let the
-    // (already-triggered) close handle teardown.
-    if (bridgeLifecycle !== "running") {
-      try {
-        msWebSocket.close();
-      } catch {
-        // ignore
-      }
-      return;
-    }
-
-    // Reset init state on each connect/reconnect. The status/Start bank (objectId
-    // 0..START_SLOT_OBJECT_ID) is preserved — see resetRealChannelTrackCache().
-    rebuildTrackLayout();
-    isInitializing = true;
-    initMessageBuffer = [];
-    resetRealChannelTrackCache();
-    meteredObjectIds = new Set();
-    metering2ParamMsChannels = [];
-    msChannelMeterDb.clear();
-    objectIdByTrackId = new Map();
-    initSeenMsChannels = new Set();
-    hasSentInitialTrackDump = false;
-
-    // Reset subscription bookkeeping so we re-subscribe on each new WS connection.
-    wsDataSubscriptions = {};
-    sendsModeMsSendIndex = null;
-    sendsModeSubscribedMsSendIndex = null;
-    inputSendState = new Map();
-
-    if (initFlushTimeoutId) clearTimeout(initFlushTimeoutId);
-    initFlushTimeoutId = setTimeout(() => finalizeInitialization("timeout"), INIT_FLUSH_TIMEOUT_MS);
-
-    subscribeToRequiredChannelData();
-    disableOSD();
-    startHandshake();
-    console.log("Console 1 handshake sent.");
-    if (wsReconnectTimeout) {
-      clearTimeout(wsReconnectTimeout);
-      wsReconnectTimeout = null;
-    }
-    // Start heartbeat/keep-alive every 4 seconds
-    if (wsHeartbeatInterval) clearInterval(wsHeartbeatInterval);
-    wsHeartbeatInterval = setInterval(() => {
-      if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
-        sendToMixingStationWS({ path: "/hi/v", method: "GET" });
-      }
-    }, 4000);
-  });
-
-  socket.on("close", () => {
-    // Ignore a stale socket's close event — `msWebSocket` already points at a newer
-    // connection (see the `socket` capture above), so this one's teardown is moot and must
-    // not clear the newer socket's already-running heartbeat/init-flush timers.
-    if (socket !== msWebSocket) return;
-
-    if (wsHeartbeatInterval) {
-      clearInterval(wsHeartbeatInterval);
-      wsHeartbeatInterval = null;
-    }
-    // Clear regardless of branch below: a pending init-flush timeout left over from a very
-    // recent connect (e.g. rapid Start-then-Stop) must not fire during standby — it would
-    // force-send a stale full track dump via `finalizeInitialization()`.
-    if (initFlushTimeoutId) {
-      clearTimeout(initFlushTimeoutId);
-      initFlushTimeoutId = null;
-    }
-
-    // Standby intentionally closes this socket (see enterStandbyState) — don't schedule
-    // the usual auto-reconnect in that case, or standby would silently reconnect ~2s later.
-    if (bridgeLifecycle !== "running") {
-      console.log("Mixing Station WebSocket closed (standby, not reconnecting).");
-      return;
-    }
-
-    const delay = 2000; // fixed 2 seconds
-    console.warn(`Mixing Station WebSocket closed, reconnecting in ${delay / 1000}s...`);
-    if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
-    wsReconnectTimeout = setTimeout(connectMixingStationWebSocket, delay);
-  });
-
-  msWebSocket.on("error", (err) => {
-    console.error("Mixing Station WebSocket error:", err.message);
-    // Don't reconnect here, let 'close' handle it
-  });
-
-  msWebSocket.on("message", (data) => {
-    handleWSMessage(data);
-  });
-}
-
 // --- Sending SysEx to Console1 ---
 /**
  * Sends a JSON object as a SysEx message to Console 1 via MIDI output.
@@ -2428,30 +2345,6 @@ function sendSysexToConsole1(jsonObj, forceSend = false) {
     // e.g. during a SIGINT shutdown that arrives before the Console 1 Fader was ever found.
     if (midiOutput) midiOutput.sendMessage(data);
   }
-}
-
-/**
- * Resolve a Console 1 `trackId` to our internal `objectId`.
- *
- * @param {string|number} trackId
- * @returns {number|undefined}
- */
-function getObjectIdForTrackId(trackId) {
-  const key = String(trackId);
-  const hit = objectIdByTrackId.get(key);
-  if (hit !== undefined) return hit;
-
-  // Fallback for edge cases where cache was externally mutated.
-  for (const objectIdStr of Object.keys(tracksByObjectId)) {
-    const cached = tracksByObjectId[objectIdStr];
-    if (!cached) continue;
-    if (String(cached.trackId) === key) {
-      const objectId = parseInt(objectIdStr, 10);
-      if (Number.isFinite(objectId)) objectIdByTrackId.set(key, objectId);
-      return objectId;
-    }
-  }
-  return undefined;
 }
 
 // --- Handshake and full-batch sends ---
@@ -2600,62 +2493,6 @@ function handleConsole1ControlJson(parsed) {
     console.log("Error parsing received JSON: " + e.toString());
   }
 }
-
-// --- Sending to Mixing Station / parsing incoming SysEx ---
-/**
- * Sends a message to Mixing Station via WebSocket if connected.
- * If not connected, the message is dropped (callers may retry later).
- * @param {object|string} msg - The message object or raw string to send.
- * @example
- * sendToMixingStationWS({ path: '/console/data/set/...' });
- */
-function sendToMixingStationWS(msg) {
-  if (msWebSocket && msWebSocket.readyState === WebSocket.OPEN) {
-    if (typeof msg === "string") {
-      msWebSocket.send(msg);
-    } else {
-      msWebSocket.send(JSON.stringify(msg));
-    }
-  }
-}
-
-/**
- * Parses a SysEx MIDI message and extracts the JSON payload.
- * @param {number[]} message - MIDI message bytes.
- * @returns {object|null} Parsed JSON object or null if invalid.
- * @example
- * const obj = parseSysexJson([0xF0, 0x7D, ...]);
- */
-function parseSysexJson(message) {
-  // Minimum: start + manufacturer + magic + "{}" + stop.
-  const minLen = 2 + SYSEX_MAGIC.length + 2 + 1;
-  if (!Array.isArray(message) || message.length < minLen) return null;
-  if (
-    message[0] !== SYSEX_START ||
-    message[1] !== SYSEX_MANUFACTURER ||
-    message[message.length - 1] !== SYSEX_STOP
-  ) {
-    return null;
-  }
-  for (let i = 0; i < SYSEX_MAGIC.length; i++) {
-    if (message[i + 2] !== SYSEX_MAGIC[i]) return null;
-  }
-  // Extract JSON string from SysEx
-  const jsonBytes = message.slice(2 + SYSEX_MAGIC.length, -1);
-  let jsonStr = "";
-  for (let i = 0; i < jsonBytes.length; i++) {
-    jsonStr += String.fromCharCode(jsonBytes[i]);
-  }
-  try {
-    return JSON.parse(jsonStr);
-  } catch (e) {
-    console.error("Error parsing SysEx JSON:", e.message);
-    return null;
-  }
-}
-
-// Raw WS payload -> text coercion (`coerceWsPayloadToText`) lives in `valueCoercion.js`
-// (pure, unit-tested) and is imported above.
 
 // --- Handling Mixing Station WebSocket messages ---
 /**
@@ -2970,10 +2807,42 @@ function handleWSMessage(data) {
   }
 }
 
-// Console 1 SysEx numeric-string coercion (`coerceConsole1NumericString`) lives in
-// `valueCoercion.js` (pure, unit-tested) and is imported above.
-
 // --- Handling Console1 MIDI messages (track parameter updates) ---
+/**
+ * Parses a SysEx MIDI message and extracts the JSON payload.
+ * @param {number[]} message - MIDI message bytes.
+ * @returns {object|null} Parsed JSON object or null if invalid.
+ * @example
+ * const obj = parseSysexJson([0xF0, 0x7D, ...]);
+ */
+function parseSysexJson(message) {
+  // Minimum: start + manufacturer + magic + "{}" + stop.
+  const minLen = 2 + SYSEX_MAGIC.length + 2 + 1;
+  if (!Array.isArray(message) || message.length < minLen) return null;
+  if (
+    message[0] !== SYSEX_START ||
+    message[1] !== SYSEX_MANUFACTURER ||
+    message[message.length - 1] !== SYSEX_STOP
+  ) {
+    return null;
+  }
+  for (let i = 0; i < SYSEX_MAGIC.length; i++) {
+    if (message[i + 2] !== SYSEX_MAGIC[i]) return null;
+  }
+  // Extract JSON string from SysEx
+  const jsonBytes = message.slice(2 + SYSEX_MAGIC.length, -1);
+  let jsonStr = "";
+  for (let i = 0; i < jsonBytes.length; i++) {
+    jsonStr += String.fromCharCode(jsonBytes[i]);
+  }
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    console.error("Error parsing SysEx JSON:", e.message);
+    return null;
+  }
+}
+
 /**
  * Build a Console 1 update payload for Bus/Main fader display while sends mode is active.
  *
