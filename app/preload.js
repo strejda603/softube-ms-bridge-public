@@ -1,4 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const { resolveLocale, loadLocaleStrings, createTranslator } = require("./i18n");
+
+// Preload scripts keep full Node access even with contextIsolation on, so the locale can be
+// loaded synchronously here — no IPC round-trip needed for translations. Electron's `app`
+// module (which has the more accurate `app.getLocale()`) isn't available from a preload
+// script's process, so this uses the `LANG` env var instead — good enough for picking a
+// locale file; `resolveLocale` falls back to English for anything unrecognized/unset anyway.
+const activeLocale = resolveLocale(process.env.LANG);
+const i18nStrings = loadLocaleStrings(activeLocale);
+const t = createTranslator(i18nStrings);
 
 /**
  * @typedef {object} BridgeConfig
@@ -142,6 +152,21 @@ contextBridge.exposeInMainWorld("bridge", {
       cb(status);
     }
   },
+});
+
+contextBridge.exposeInMainWorld("i18n", {
+  /** Active locale code (e.g. "en"). Only "en" ships today; see app/locales/. */
+  locale: activeLocale,
+  /**
+   * Translate a key from app/locales/<locale>.json, with optional `{placeholder}` substitution.
+   * Unknown keys resolve to the key itself rather than throwing.
+   * @param {string} key
+   * @param {Record<string, string|number>} [vars]
+   * @returns {string}
+   * @example
+   * i18n.t("status.ariaLabel", { name: "Mixing Station", state: "running" });
+   */
+  t: (key, vars) => t(key, vars),
 });
 
 contextBridge.exposeInMainWorld("presets", {

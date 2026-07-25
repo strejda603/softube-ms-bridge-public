@@ -89,6 +89,26 @@ Build a standalone macOS app bundle (plus `.dmg` and `.zip` artifacts):
 
 Artifacts are written to `dist/`.
 
+## Localization
+
+The GUI is scaffolded for translation, though only English (`app/locales/en.json`) ships
+today. Every static string in `app/renderer/index.html` is marked with a `data-i18n*`
+attribute; `applyI18n()` in `app/renderer/renderer.js` walks the DOM at startup and fills them
+in from the active locale. Dynamic strings (button/status text set from JS) go through the
+`t(key, vars?)` helper the same way.
+
+To add a language:
+
+1. Copy `app/locales/en.json` to `app/locales/<code>.json` (e.g. `cs.json`) and translate the
+   values — keep the keys and any `{placeholder}` tokens exactly as-is.
+2. A partial translation is fine: `app/i18n.js`'s `loadLocaleStrings()` merges it over the
+   English fallback, so an untranslated key just shows English rather than breaking.
+3. `resolveLocale()` currently picks a locale from the `LANG` environment variable (falling
+   back to English for anything unrecognized) — there's no in-GUI language switcher yet.
+
+The bridge process (`index.js`)'s own console output is a technical/debug log, not user-facing
+UI, and is intentionally out of scope — it stays English-only, same as most server/daemon logs.
+
 ## Track layout (banks + ordering)
 
 Console 1 Fader Mk III has 10 faders, so the bridge builds 10-wide banks.
