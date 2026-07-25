@@ -1,4 +1,47 @@
-/* global bridge, presets */
+/* global bridge, presets, i18n */
+
+/**
+ * Translate a key from `app/locales/<locale>.json` (see `app/i18n.js`). Thin wrapper around
+ * the `window.i18n` API exposed by preload.js — kept as a local `t()` so call sites read the
+ * same as the main-process convention, and so this file only has one place that'd need to
+ * change if the exposed API's shape ever does.
+ * @param {string} key
+ * @param {Record<string, string|number>} [vars]
+ * @returns {string}
+ */
+function t(key, vars) {
+  return i18n.t(key, vars);
+}
+
+/**
+ * Apply translations to every element carrying a `data-i18n*` attribute:
+ * - `data-i18n="key"` sets `textContent`
+ * - `data-i18n-html="key"` sets `innerHTML` (only for the couple of strings with inline
+ *   markup, e.g. the Quick Tips `<b>` tags — never used for anything built from user input)
+ * - `data-i18n-title="key"` / `data-i18n-aria-label="key"` / `data-i18n-placeholder="key"`
+ *   set the corresponding attribute
+ *
+ * Called once at startup, before any code reads default text/attributes off these elements.
+ * Only "en" ships today (see app/locales/), so this currently just re-writes English over
+ * English — but every string in the static HTML is already wired for a future locale.
+ */
+function applyI18n() {
+  for (const el of document.querySelectorAll("[data-i18n]")) {
+    el.textContent = t(el.getAttribute("data-i18n"));
+  }
+  for (const el of document.querySelectorAll("[data-i18n-html]")) {
+    el.innerHTML = t(el.getAttribute("data-i18n-html"));
+  }
+  for (const el of document.querySelectorAll("[data-i18n-title]")) {
+    el.title = t(el.getAttribute("data-i18n-title"));
+  }
+  for (const el of document.querySelectorAll("[data-i18n-aria-label]")) {
+    el.setAttribute("aria-label", t(el.getAttribute("data-i18n-aria-label")));
+  }
+  for (const el of document.querySelectorAll("[data-i18n-placeholder]")) {
+    el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
+  }
+}
 
 // When Electron is launched with `--verbose`, main passes `?verbose=1`.
 // In that mode we keep processing bridge log lines (for mode/status), but do not
@@ -1104,10 +1147,15 @@ function classifyLogLine(line) {
 }
 
 function setModeUi(modeText) {
-  currentMode = modeText || "—";
+  // NOTE: `modeText` itself ("Standard" / "Sends (Bus N)" / the "—" placeholder) is NOT run
+  // through t() — it doubles as an internal state marker (see the `isSends` regex below and
+  // the `currentMode === "—"` checks elsewhere), so translating it would need separating the
+  // mode's *kind* from its *display text* first. Out of scope for this i18n scaffolding pass;
+  // only the "Mode: " label wrapper is localized for now.
+  currentMode = modeText || t("topbar.modeUnset");
   const el = document.getElementById("mode");
   if (!el) return;
-  el.textContent = `Mode: ${currentMode}`;
+  el.textContent = t("topbar.mode", { mode: currentMode });
 
   // Visual hint: sends mode = highlighted, standard/unknown = neutral.
   const isSends = /^Sends\b/i.test(currentMode);
@@ -1233,7 +1281,11 @@ function setStatusUi({ running, error } = {}) {
   if (typeof running === "boolean") uiRunning = running;
   if (typeof error === "boolean") uiError = error;
 
-  status.textContent = uiError ? "Error" : uiRunning ? "Running" : "Stopped";
+  status.textContent = uiError
+    ? t("topbar.error")
+    : uiRunning
+      ? t("topbar.running")
+      : t("topbar.stopped");
 
   if (uiError) {
     status.style.borderColor = "rgba(239,68,68,0.5)";
@@ -1471,13 +1523,13 @@ const STATUS_DOT_ELEMENT_IDS = {
 
 /** MIDI-device fields say "connected"; running-app fields say "running". */
 const STATUS_DOT_VERB = {
-  ipad: "connected",
-  spdSxPro: "connected",
-  midiMaestro: "connected",
-  bomeMtp: "running",
-  mixingStation: "running",
-  console1Osd: "running",
-  abletonLive: "running",
+  ipad: "Connected",
+  spdSxPro: "Connected",
+  midiMaestro: "Connected",
+  bomeMtp: "Running",
+  mixingStation: "Running",
+  console1Osd: "Running",
+  abletonLive: "Running",
 };
 
 /**
@@ -1493,12 +1545,15 @@ function applyStatusIndicators(status) {
     if (!el) continue;
     const isOn = !!status[field];
     el.classList.toggle("on", isOn);
-    const verb = STATUS_DOT_VERB[field];
-    el.setAttribute("aria-label", `${el.title}: ${isOn ? verb : `not ${verb}`}`);
+    const verbSuffix = STATUS_DOT_VERB[field]; // "Connected" or "Running"
+    const stateKey = isOn ? `status.state${verbSuffix}` : `status.stateNot${verbSuffix}`;
+    el.setAttribute("aria-label", t("status.ariaLabel", { name: el.title, state: t(stateKey) }));
   }
 }
 
 async function init() {
+  applyI18n();
+
   setFormFromConfig(
     makeDefaultConfig({ inputCount: state.inputTotalCount, busCount: state.busTotalCount })
   );
