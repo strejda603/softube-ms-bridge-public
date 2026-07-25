@@ -100,23 +100,6 @@ function sendBridgeControlMessage(obj) {
   stdin.write(JSON.stringify(obj) + "\n");
 }
 
-/**
- * Forward a live status snapshot (from `startStatusMonitor`'s `onChange`) to the bridge
- * process, regardless of its lifecycle state — unlike `bridge:start`/`bridge:stop`/
- * `bridge:applyConfig`, this isn't gated on `bridgeLifecycleState`, since the status
- * indicators are meant to work in standby too. No-ops if the bridge hasn't spawned yet
- * (`sendBridgeControlMessage` would otherwise throw).
- * @param {object} status
- */
-function sendStatusToBridge(status) {
-  if (!bridgeProcess) return;
-  try {
-    sendBridgeControlMessage({ type: "status:update", status });
-  } catch (e) {
-    console.warn("[status] Failed to forward status to bridge:", e?.message || e);
-  }
-}
-
 // --- User data / presets file management ---
 function getUserDataFile(relPath) {
   return path.join(app.getPath("userData"), relPath);
@@ -276,10 +259,9 @@ function createWindow() {
     // listener before the first snapshot is sent — otherwise a device/app
     // already present at launch could send its first (only, since the
     // poller only re-sends on change) update before anyone is listening.
-    stopStatusMonitor = startStatusMonitor(win, undefined, sendStatusToBridge);
+    stopStatusMonitor = startStatusMonitor(win);
     // Same reasoning applies to the bridge process: spawn it once the renderer
-    // has loaded, so its first log lines / hardware-trigger events have a
-    // listener already registered.
+    // has loaded, so its first log lines have a listener already registered.
     spawnBridgeProcess();
   });
 

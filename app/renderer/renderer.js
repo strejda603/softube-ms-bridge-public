@@ -1460,24 +1460,14 @@ async function applyCliArgs(args) {
 
 /** Maps a status field name to its topbar dot element id. */
 const STATUS_DOT_ELEMENT_IDS = {
-  ipad: "indIpad",
-  spdSxPro: "indSpdSxPro",
-  midiMaestro: "indMidiMaestro",
-  bomeMtp: "indBomeMtp",
   mixingStation: "indMixingStation",
   console1Osd: "indConsole1Osd",
-  abletonLive: "indAbletonLive",
 };
 
-/** MIDI-device fields say "connected"; running-app fields say "running". */
+/** Both fields are running-app checks. */
 const STATUS_DOT_VERB = {
-  ipad: "connected",
-  spdSxPro: "connected",
-  midiMaestro: "connected",
-  bomeMtp: "running",
   mixingStation: "running",
   console1Osd: "running",
-  abletonLive: "running",
 };
 
 /**

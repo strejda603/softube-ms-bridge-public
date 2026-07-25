@@ -130,9 +130,9 @@ contextBridge.exposeInMainWorld("bridge", {
    * Subscribe to topbar status indicator updates. Delivers immediately if one
    * arrived before this was called (same buffering pattern as `onCliArgs`).
    *
-   * @param {(status: {ipad:boolean, spdSxPro:boolean, midiMaestro:boolean, bomeMtp:boolean, mixingStation:boolean, console1Osd:boolean, abletonLive:boolean}) => void} cb
+   * @param {(status: {mixingStation:boolean, console1Osd:boolean}) => void} cb
    * @example
-   * bridge.onStatusUpdate((status) => { console.log(status.ipad); });
+   * bridge.onStatusUpdate((status) => { console.log(status.mixingStation); });
    */
   onStatusUpdate: (cb) => {
     statusUpdateCallback = cb;

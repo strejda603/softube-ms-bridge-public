@@ -156,20 +156,11 @@ It converts dB values into Console 1’s expected 0..1 peak-like meter value.
 
 When run via the GUI, the bridge process is spawned once when the GUI launches and stays alive
 (holding the Console 1 Fader MIDI connection) until the GUI quits — it no longer restarts on every
-Start/Stop. Start/Stop instead toggle between two states:
+Start/Stop. Start/Stop instead toggle between two states, both controlled from the GUI's Start/Stop
+button:
 
-- **Standby**: Console 1 Fader connected, a fixed status bank (bank 0) shown on the fader, no
-  Mixing Station connection.
-- **Running**: full bridging active, plus the status bank continues to be shown.
-
-The 7 status slots (iPad, SPD-SX PRO, MIDI Maestro, Bome MIDI Translator Pro, Mixing Station,
-Console 1 On-Screen Display, Ableton Live 12 Suite) show green when present, red when not —
-mirroring the GUI's own topbar dots — and update live in either lifecycle state, roughly every 2
-seconds.
-
-The status bank's 10th slot doubles as a physical Start/Stop button — pressing it while in standby
-starts the bridge (using whatever preset is currently loaded in the GUI), pressing it while running
-stops it. It shows "Start" (orange) or "Stop" (red) accordingly.
+- **Standby**: Console 1 Fader connected, no Mixing Station connection.
+- **Running**: full bridging active.
 
 ## Shutdown behavior
 
@@ -196,24 +187,17 @@ On `SIGINT`/`SIGTERM` (Ctrl+C):
   - Set `LOG_JSON = true` in [index.js](index.js) to log WS/MIDI JSON payloads.
   - Set `LOG_METERING = true` in [index.js](index.js) to log metering parsing + subscription details.
 
-- A topbar status dot (iPad/SPD-SX PRO/MIDI Maestro/Bome MIDI Translator Pro/Mixing
-  Station/Console 1 On-Screen Display/Ableton Live 12 Suite) never turns green despite the
-  device/app being present:
+- A topbar status dot (Mixing Station/Console 1 On-Screen Display) never turns green despite the
+  app being present:
   - The match string in [app/statusMonitor.js](app/statusMonitor.js) likely doesn't match what
-    your system actually reports. Check the exact MIDI port name in Audio MIDI Setup, or the exact
-    process name via `ps -Ao args= | grep -i <app name>`, and adjust the corresponding string in
-    `computeStatus()`.
+    your system actually reports. Check the exact process name via `ps -Ao args= | grep -i <app
+    name>`, and adjust the corresponding string in `computeStatus()`.
 
-- The status/Start bank never appears on the physical Console1 Fader:
-  - Check the GUI's log panel for `[Lifecycle]`-prefixed lines confirming the bridge found the
-    Console 1 Fader port — if it's still logged as waiting, the port isn't being detected (see the
-    "MIDI port not found" entry above).
-
-- Pressing the hardware Start/Stop slot does nothing:
+- Clicking Start does nothing:
   - Confirm the GUI window is open (the bridge process only exists while the GUI is running).
-  - If you click Start (or press the hardware slot) within a second or two of launching the app,
-    the bridge may not have found the Console 1 Fader yet — the GUI's status badge can briefly show
-    "Running" even though the bridge itself logged an "Ignoring lifecycle:start" warning and stayed
-    in standby. Wait for the Console 1 Fader's status bank to appear before pressing Start. The same
-    applies if the bridge process ever crashes and gets re-spawned: the very next Start click can
-    race the fresh process's MIDI detection the same way.
+  - If you click Start within a second or two of launching the app, the bridge may not have found
+    the Console 1 Fader yet — the GUI's status badge can briefly show "Running" even though the
+    bridge itself logged an "Ignoring lifecycle:start" warning and stayed in standby. Check the
+    GUI's log panel for `[Lifecycle]`-prefixed lines confirming the bridge found the Console 1
+    Fader port before pressing Start. The same applies if the bridge process ever crashes and gets
+    re-spawned: the very next Start click can race the fresh process's MIDI detection the same way.
