@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Softube-MS-Bridge</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-icon" src="assets/icon.png" alt="" />
+          <div>
+            <div class="brand-title" data-i18n="app.title">Softube-MS-Bridge</div>
+            <div class="brand-sub" data-i18n="app.subtitle">Console 1 ↔ Mixing Station</div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <div class="status-indicators" id="statusIndicators">
+            <span class="status-item" data-i18n-title="status.mixingStation" title="Mixing Station">
+              <span
+                class="status-dot"
+                id="indMixingStation"
+                data-i18n-title="status.mixingStation"
+                title="Mixing Station"
+                aria-label="Mixing Station: not running"
+              ></span>
+              <span class="status-label" data-i18n="status.mixingStationShort">MS</span>
+            </span>
+            <span
+              class="status-item"
+              data-i18n-title="status.console1Osd"
+              title="Console 1 On-Screen Display"
+            >
+              <span
+                class="status-dot"
+                id="indConsole1Osd"
+                data-i18n-title="status.console1Osd"
+                title="Console 1 On-Screen Display"
+                aria-label="Console 1 On-Screen Display: not running"
+              ></span>
+              <span class="status-label" data-i18n="status.console1OsdShort">OSD</span>
+            </span>
+          </div>
+          <div class="badge" id="mode">Mode: —</div>
+          <div class="status" id="status" data-i18n="topbar.stopped">Stopped</div>
+          <button
+            class="btn primary hidden"
+            id="btnApply"
+            data-i18n="topbar.applyChanges"
+            data-i18n-title="topbar.applyChangesTitle"
+            title="Apply settings and update mappings without restarting"
+          >
+            Apply Changes
+          </button>
+          <button class="btn primary" id="btnStart" data-i18n="topbar.start">Start</button>
+          <button class="btn" id="btnStop" data-i18n="topbar.stop" disabled>Stop</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <aside class="sidebar">
+          <div class="panel">
+            <div class="panel-title" data-i18n="presets.title">Presets</div>
+            <div class="row">
+              <select id="presetSelect" class="select"></select>
+              <button
+                class="btn"
+                id="btnReloadPresets"
+                data-i18n-title="presets.refresh"
+                title="Refresh presets"
+              >
+                ↻
+              </button>
+            </div>
+
+            <div class="row">
+              <input
+                id="presetName"
+                class="input"
+                data-i18n-placeholder="presets.namePlaceholder"
+                placeholder="Preset name"
+              />
+            </div>
+
+            <div class="row grid-2">
+              <button class="btn" id="btnSavePreset" data-i18n="presets.save">Save</button>
+              <button class="btn" id="btnLoadPreset" data-i18n="presets.load">Load</button>
+            </div>
+
+            <div class="row grid-2">
+              <button class="btn danger" id="btnDeletePreset" data-i18n="presets.delete">
+                Delete
+              </button>
+              <button class="btn" id="btnExportPreset" data-i18n="presets.export">Export</button>
+            </div>
+
+            <div class="row">
+              <button class="btn" id="btnImportPreset" data-i18n="presets.import">Import…</button>
+            </div>
+
+            <div class="row">
+              <button class="btn" id="btnOpenPresetsFolder" data-i18n="presets.openFolder">
+                Open presets folder
+              </button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title" data-i18n="quickTips.title">Quick Tips</div>
+            <div class="muted small" data-i18n-html="quickTips.body">
+              Drag to reorder (or use <b>↑/↓</b>). Use <b>Link</b> to group adjacent channels as
+              stereo, and <b>Unlink</b> to split.
+            </div>
+          </div>
+        </aside>
+
+        <main class="main">
+          <section class="panel">
+            <div class="panel-title" data-i18n="connection.title">Connection</div>
+            <div class="form">
+              <label class="label" data-i18n="connection.wsUrlLabel">Mixing Station WebSocket URL</label>
+              <input
+                id="wsUrl"
+                class="input"
+                data-i18n-placeholder="connection.wsUrlPlaceholder"
+                placeholder="ws://localhost:8080"
+              />
+
+              <label class="label" for="metering2IntervalMs" data-i18n="connection.meteringIntervalLabel">
+                Metering interval (ms)
+              </label>
+              <div class="row">
+                <input
+                  id="metering2IntervalMs"
+                  type="range"
+                  min="30"
+                  max="1000"
+                  step="1"
+                  class="range"
+                />
+                <input
+                  id="metering2IntervalMsValue"
+                  class="input narrow range-value"
+                  type="number"
+                  min="30"
+                  max="1000"
+                  step="1"
+                  value="100"
+                />
+              </div>
+
+              <label class="checkbox">
+                <input type="checkbox" id="logJson" />
+                <span data-i18n="connection.logJsonLabel">Enable JSON debug logging</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title" data-i18n="trackLayout.title">Track Custom Layout</div>
+            <div class="form">
+              <div class="row">
+                <button class="btn" id="btnDetectFromMixer" data-i18n="trackLayout.readFromMixer">
+                  Read from mixer
+                </button>
+                <div class="muted small" id="detectStatus"></div>
+              </div>
+
+              <div class="tabs" role="tablist" data-i18n-aria-label="trackLayout.tabs.ariaLabel" aria-label="Track layout tabs">
+                <button
+                  class="tab-btn active"
+                  id="layoutTabInputs"
+                  role="tab"
+                  aria-selected="true"
+                  aria-controls="layoutPanelInputs"
+                  tabindex="0"
+                >
+                  <span data-i18n="trackLayout.tabs.inputs">Inputs</span>
+                  <span class="tab-badge" id="layoutTabInputsBadge"></span>
+                </button>
+                <button
+                  class="tab-btn"
+                  id="layoutTabBuses"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="layoutPanelBuses"
+                  tabindex="-1"
+                >
+                  <span data-i18n="trackLayout.tabs.buses">Buses</span>
+                  <span class="tab-badge" id="layoutTabBusesBadge"></span>
+                </button>
+              </div>
+
+              <div class="tab-panels">
+                <div
+                  id="layoutPanelInputs"
+                  class="tab-panel"
+                  role="tabpanel"
+                  aria-labelledby="layoutTabInputs"
+                >
+                  <div class="layout-controls">
+                    <div class="row">
+                      <label class="label" for="inputCount" data-i18n="trackLayout.inputCountLabel">
+                        Input count
+                      </label>
+                      <input id="inputCount" class="input narrow" type="number" min="0" step="1" />
+                      <button
+                        class="btn"
+                        id="btnInputGenerate"
+                        data-i18n-title="trackLayout.generateTitle"
+                        title="Generate sequential order"
+                      >
+                        <span data-i18n="trackLayout.generate">Generate</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="split layout-split">
+                    <div>
+                      <div class="subhead" data-i18n="trackLayout.customOrdering">Custom ordering</div>
+                      <div class="muted small" data-i18n="trackLayout.customOrderingHint">
+                        For deactivation drag on the right.
+                      </div>
+                      <div
+                        id="inputEditor"
+                        class="list"
+                        data-i18n-aria-label="trackLayout.inputOrderAriaLabel"
+                        aria-label="Input track order"
+                      ></div>
+                    </div>
+
+                    <div>
+                      <div class="subhead" data-i18n="trackLayout.unorganized">Unorganized</div>
+                      <div class="muted small" data-i18n="trackLayout.unorganizedHint">
+                        Drag into the custom layout on the left.
+                      </div>
+                      <div
+                        id="inputRest"
+                        class="list list-rest"
+                        data-i18n-aria-label="trackLayout.unorganizedInputsAriaLabel"
+                        aria-label="Unorganized input tracks"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  id="layoutPanelBuses"
+                  class="tab-panel hidden"
+                  role="tabpanel"
+                  aria-labelledby="layoutTabBuses"
+                >
+                  <div class="layout-controls">
+                    <div class="row">
+                      <label class="label" for="busCount" data-i18n="trackLayout.busCountLabel">
+                        Bus count
+                      </label>
+                      <input id="busCount" class="input narrow" type="number" min="0" step="1" />
+                      <button
+                        class="btn"
+                        id="btnBusGenerate"
+                        data-i18n-title="trackLayout.generateTitle"
+                        title="Generate sequential order"
+                      >
+                        <span data-i18n="trackLayout.generate">Generate</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="split layout-split">
+                    <div>
+                      <div class="subhead" data-i18n="trackLayout.customOrdering">Custom ordering</div>
+                      <div class="muted small" data-i18n="trackLayout.customOrderingHint">
+                        For deactivation drag on the right.
+                      </div>
+                      <div
+                        id="busEditor"
+                        class="list"
+                        data-i18n-aria-label="trackLayout.busOrderAriaLabel"
+                        aria-label="Bus track order"
+                      ></div>
+                    </div>
+
+                    <div>
+                      <div class="subhead" data-i18n="trackLayout.unorganized">Unorganized</div>
+                      <div class="muted small" data-i18n="trackLayout.unorganizedHint">
+                        Drag into the custom layout on the left.
+                      </div>
+                      <div
+                        id="busRest"
+                        class="list list-rest"
+                        data-i18n-aria-label="trackLayout.unorganizedBusesAriaLabel"
+                        aria-label="Unorganized bus tracks"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title" data-i18n="sendsMapping.title">Sends Mapping</div>
+            <div class="form">
+              <div class="subhead" data-i18n="sendsMapping.subhead">Sends 1-6 map to Buses</div>
+              <div
+                class="send-grid"
+                data-i18n-aria-label="sendsMapping.ariaLabel"
+                aria-label="Console 1 Sends mapping"
+              >
+                <div class="send-item">
+                  <label class="label" for="sendMap1" data-i18n="sendsMapping.send1">Send 1</label>
+                  <select id="sendMap1" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap2" data-i18n="sendsMapping.send2">Send 2</label>
+                  <select id="sendMap2" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap3" data-i18n="sendsMapping.send3">Send 3</label>
+                  <select id="sendMap3" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap4" data-i18n="sendsMapping.send4">Send 4</label>
+                  <select id="sendMap4" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap5" data-i18n="sendsMapping.send5">Send 5</label>
+                  <select id="sendMap5" class="select"></select>
+                </div>
+                <div class="send-item">
+                  <label class="label" for="sendMap6" data-i18n="sendsMapping.send6">Send 6</label>
+                  <select id="sendMap6" class="select"></select>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title" data-i18n="colors.title">Console 1 Fixed Colors</div>
+            <div class="form grid-cols">
+              <div>
+                <label class="label" data-i18n="colors.main">Main</label>
+                <div class="row">
+                  <input type="color" id="mainColorPicker" class="color" />
+                  <input id="mainColorInt" class="input" placeholder="0x00A5FF" />
+                </div>
+              </div>
+              <div>
+                <label class="label" data-i18n="colors.bus">Bus</label>
+                <div class="row">
+                  <input type="color" id="busColorPicker" class="color" />
+                  <input id="busColorInt" class="input" placeholder="0x800080" />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title" data-i18n="console.title">Console Output</div>
+            <div class="row">
+              <button class="btn" id="btnClearLog" data-i18n="console.clear">Clear</button>
+              <label class="checkbox">
+                <input type="checkbox" id="autoScroll" checked />
+                <span data-i18n="console.autoScroll">Auto-scroll</span>
+              </label>
+            </div>
+            <div class="log" id="log"></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,91 @@
+{
+  "name": "softube-mixingstation-bridge",
+  "version": "1.0.0",
+  "description": "Bridge between Softube Console 1 and Mixing Station API",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "start": "node index.js",
+    "fake:meters": "node tools/fake-metering-proxy.js --verbose",
+    "fake:meters:proxy": "node tools/fake-metering-proxy.js --listen 8081 --upstream ws://127.0.0.1:8080",
+    "fake:x32": "node tools/fake-metering-proxy.js --x32 --listen 10023",
+    "gui": "electron app/main.js",
+    "gui:verbose": "electron app/main.js --verbose",
+    "repl": "node tools/ws-repl.js",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "keywords": [
+    "softube",
+    "console1",
+    "mixingstation",
+    "bridge",
+    "midi",
+    "ws",
+    "websocket"
+  ],
+  "author": "Strejda603",
+  "license": "GPL-3.0-only",
+  "dependencies": {
+    "@julusian/midi": "^3.7.2",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.strejda603.console1msbridge",
+    "productName": "Softube Console 1 MS Bridge",
+    "compression": "maximum",
+    "electronLanguages": [
+      "en",
+      "cs"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "app/**/*",
+      "*.js",
+      "package.json",
+      "README.md"
+    ],
+    "extraMetadata": {
+      "main": "app/main.js"
+    },
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": "-"
+    },
+    "win": {
+      "icon": "build/icon.icon/Assets/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "build/icon.icon/Assets/icon.png",
+      "category": "Audio",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
+  }
+}
