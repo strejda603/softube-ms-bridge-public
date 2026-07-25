@@ -4,6 +4,7 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const { parseCliArgs, getUserArgv } = require("./cliArgs");
 const { startStatusMonitor } = require("./statusMonitor");
+const { resolveLocale, loadLocaleStrings } = require("./i18n");
 
 // --- CLI args & single-instance lock ---
 // CLI flags
@@ -27,6 +28,24 @@ const initialCliArgs = parseCliArgs(getUserArgv(process.argv, app.isPackaged));
 for (const warning of initialCliArgs.warnings) {
   console.warn(`[cli] ${warning}`);
 }
+
+// Loaded once at process start (app.getLocale() is only reliable in the main process —
+// see i18n:get below for why preload can't just load this itself).
+const activeLocale = resolveLocale(app.getLocale());
+const i18nStrings = loadLocaleStrings(activeLocale);
+
+/**
+ * Hand the resolved locale + strings to preload.js synchronously.
+ *
+ * preload.js runs sandboxed (Electron's default since v20) and can't `require()` a local
+ * project file like `./i18n` — only a small built-in whitelist resolves there. Loading the
+ * locale here in the (unsandboxed) main process and handing it over via `ipcRenderer.sendSync`
+ * sidesteps that entirely; `ipcRenderer`/`contextBridge` are the only APIs preload actually
+ * needs, and both are always available to it.
+ */
+ipcMain.on("i18n:get", (event) => {
+  event.returnValue = { locale: activeLocale, strings: i18nStrings };
+});
 
 /**
  * @typedef {object} BridgeConfig

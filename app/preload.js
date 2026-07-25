@@ -1,14 +1,27 @@
 const { contextBridge, ipcRenderer } = require("electron");
-const { resolveLocale, loadLocaleStrings, createTranslator } = require("./i18n");
 
-// Preload scripts keep full Node access even with contextIsolation on, so the locale can be
-// loaded synchronously here — no IPC round-trip needed for translations. Electron's `app`
-// module (which has the more accurate `app.getLocale()`) isn't available from a preload
-// script's process, so this uses the `LANG` env var instead — good enough for picking a
-// locale file; `resolveLocale` falls back to English for anything unrecognized/unset anyway.
-const activeLocale = resolveLocale(process.env.LANG);
-const i18nStrings = loadLocaleStrings(activeLocale);
-const t = createTranslator(i18nStrings);
+// Preload scripts run sandboxed (Electron's default since v20): `require()` only resolves a
+// small built-in whitelist, NOT local project files like `./i18n` — attempting that silently
+// aborts the whole preload script (nothing gets exposed at all, not just i18n). So the locale
+// is loaded in the main process (see app/main.js's `i18n:get` handler, which has full Node
+// access and the real `app.getLocale()`) and fetched here over synchronous IPC instead.
+const { locale: activeLocale, strings: i18nStrings } = ipcRenderer.sendSync("i18n:get");
+
+/**
+ * Inlined rather than imported from app/i18n.js, for the same sandboxed-`require()` reason
+ * above — this mirrors `createTranslator()` there exactly; keep the two in sync if either
+ * changes.
+ * @param {string} key
+ * @param {Record<string, string|number>} [vars]
+ * @returns {string}
+ */
+function t(key, vars) {
+  const template = Object.prototype.hasOwnProperty.call(i18nStrings, key) ? i18nStrings[key] : key;
+  if (!vars) return template;
+  return template.replace(/\{(\w+)\}/g, (match, varName) =>
+    Object.prototype.hasOwnProperty.call(vars, varName) ? String(vars[varName]) : match,
+  );
+}
 
 /**
  * @typedef {object} BridgeConfig
