@@ -100,6 +100,10 @@
         "AppImage",
         "deb"
       ]
+    },
+    "funding": {
+      "type": "ko-fi",
+      "url": "https://ko-fi.com/strejda603"
     }
   }
 }
