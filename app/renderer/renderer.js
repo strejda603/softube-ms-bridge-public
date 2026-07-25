@@ -1551,14 +1551,6 @@ async function init() {
     applyStatusIndicators(status);
   });
 
-  bridge.onHardwareTrigger((trigger) => {
-    if (trigger.type === "start") {
-      startBridgeFromForm();
-    } else if (trigger.type === "stop") {
-      stopBridgeFromUi();
-    }
-  });
-
   // Keep status correct if GUI is reloaded.
   try {
     const st = await bridge.status();

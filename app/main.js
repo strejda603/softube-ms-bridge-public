@@ -70,13 +70,7 @@ let stopStatusMonitor = null;
  */
 let bridgeLifecycleState = "standby";
 
-/**
- * Prefix marking a structured event line on the bridge process's stdout, as opposed to a
- * plain human-readable log line. See `index.js`'s `@@BRIDGE_EVENT@@` convention.
- */
-const BRIDGE_EVENT_PREFIX = "@@BRIDGE_EVENT@@";
-
-// --- Bridge process communication (log lines, control messages, hardware events) ---
+// --- Bridge process communication (log lines, control messages) ---
 /**
  * Send parsed CLI args to the renderer over the `cli:apply` channel.
  * @param {import('electron').BrowserWindow|null} win
@@ -91,28 +85,6 @@ function sendCliArgsToRenderer(win, args) {
 function sendBridgeLogLine(line) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("bridge:log", line);
-}
-
-/**
- * Parse and dispatch a structured `@@BRIDGE_EVENT@@`-prefixed stdout line from the bridge
- * process (see `index.js`). Currently only `hardware:start`/`hardware:stop` (the physical
- * Start/Stop slot on the Console 1 Fader's status bank) are recognized.
- * @param {string} jsonText - everything after the `@@BRIDGE_EVENT@@` prefix
- */
-function handleBridgeEventLine(jsonText) {
-  let event;
-  try {
-    event = JSON.parse(jsonText);
-  } catch {
-    return;
-  }
-  if (!event || typeof event.type !== "string") return;
-
-  if (event.type === "hardware:start" || event.type === "hardware:stop") {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    const triggerType = event.type === "hardware:start" ? "start" : "stop";
-    mainWindow.webContents.send("bridge:hardwareTrigger", { type: triggerType });
-  }
 }
 
 /**
@@ -414,11 +386,6 @@ function spawnBridgeProcess() {
     const text = buf.toString("utf8");
     for (const line of text.split(/\r?\n/)) {
       if (!line) continue;
-
-      if (line.startsWith(BRIDGE_EVENT_PREFIX)) {
-        handleBridgeEventLine(line.slice(BRIDGE_EVENT_PREFIX.length));
-        continue;
-      }
 
       if (VERBOSE_TERMINAL) {
         try {

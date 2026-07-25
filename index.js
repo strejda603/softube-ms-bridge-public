@@ -24,13 +24,6 @@ const WebSocket = require("ws");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const {
-  buildStatusBankSlots,
-  startSlotDisplayFor,
-  hardwareTriggerTypeFor,
-  statusSlotColorFor,
-  START_SLOT_OBJECT_ID,
-} = require("./console1StatusBank");
 const { msColorToSoftubeColorInt } = require("./midiColorUtils");
 const { clamp01, hybridStereoPanToDualMonoPans } = require("./panUtils");
 const { decodeMetering2Binary, dbToConsole1MeterNorm } = require("./meteringUtils");
@@ -86,12 +79,6 @@ let MAIN_STEREO_CHANNELS = [70, 71]; // Main L/R
 // Softube color integer encoding: r in LSB, g in next byte, b in MSB. (BGR order in hex.)
 let CONSOLE1_MAIN_COLOR = 0x00a5ff; // Orange-ish (r=255,g=165,b=0)
 let CONSOLE1_BUS_COLOR = 0x800080; // Purple (r=128,g=0,b=128)
-// Status/Start bank (bank 0) colors. Not user-configurable (unlike the two above), since
-// this bank's contents are fixed by the feature, not by the user's channel layout.
-const CONSOLE1_START_COLOR = 0xff841b; // Blue (like "primary" in Bootstrap 5 palette)
-const CONSOLE1_STOP_COLOR = 0x5a28f8; // Red (like "danger" in Bootstrap 5 palette)
-const CONSOLE1_STATUS_ON_COLOR = 0x00ff00; // Pure green (matches MS_PALETTE_BASE_COLORS[2] "Green")
-const CONSOLE1_STATUS_OFF_COLOR = 0x0000ff; // Pure red — same value as CONSOLE1_STOP_COLOR, distinct constant
 
 // ####################################
 // ###### C1 <-> MS SEND MAPPING ######
@@ -385,13 +372,10 @@ function applyRuntimeConfigAndResync(cfg, reason = "config apply") {
   }
   // Otherwise: rebuild layout and force a full Console 1 re-sync so names/colors/mappings refresh.
   rebuildTrackLayout();
-  // Reset per-track caches so we don't keep stale layout-derived objects. The status/Start
-  // bank (objectId 0..START_SLOT_OBJECT_ID) is preserved — see resetRealChannelTrackCache().
-  resetRealChannelTrackCache();
+  // Reset per-track caches so we don't keep stale layout-derived objects.
+  tracksByObjectId = {};
   objectIdByTrackId = new Map();
-  for (const objectId of trackIdByObjectId.keys()) {
-    if (objectId > START_SLOT_OBJECT_ID) trackIdByObjectId.delete(objectId);
-  }
+  trackIdByObjectId.clear();
   // Intentionally do NOT clear `usedTrackIds`: this prevents accidental trackId reuse
   // across live rebuilds within the same process.
   meteredObjectIds = new Set();
@@ -505,13 +489,6 @@ function installRuntimeControlChannel() {
         }
       }
 
-      if (msg && msg.type === "status:update") {
-        try {
-          applyLiveStatusColors(msg.status || {});
-        } catch (e) {
-          console.warn("[status] Failed to apply live status colors:", e?.message || e);
-        }
-      }
     }
   });
 }
@@ -1136,11 +1113,8 @@ function unsubscribeFromChannelData(path, format) {
  *   10th fader of the last bus bank
  */
 function rebuildTrackLayout() {
-  // Seed with the fixed status/Start bank (bank 0) — everything below builds on top of it
-  // using `slots.length` as the running objectId counter, so this single seed line is what
-  // shifts all real input/bus/main banks back by one bank.
   /** @type {TrackLayoutSlot[]} */
-  const slots = buildStatusBankSlots();
+  const slots = [];
 
   // Build ordered input tracks (mono or grouped stereo) and then append remaining inputs.
   /** @type {Set<number>} */
@@ -1575,12 +1549,11 @@ function connectMixingStationWebSocket() {
       return;
     }
 
-    // Reset init state on each connect/reconnect. The status/Start bank (objectId
-    // 0..START_SLOT_OBJECT_ID) is preserved — see resetRealChannelTrackCache().
+    // Reset init state on each connect/reconnect.
     rebuildTrackLayout();
     isInitializing = true;
     initMessageBuffer = [];
-    resetRealChannelTrackCache();
+    tracksByObjectId = {};
     meteredObjectIds = new Set();
     metering2ParamMsChannels = [];
     msChannelMeterDb.clear();
@@ -1708,28 +1681,6 @@ function createDefaultTrackForSlot(objectId) {
   if (kind === "bus") color = CONSOLE1_BUS_COLOR;
   else if (kind === "main") color = CONSOLE1_MAIN_COLOR;
   else if (kind === "empty") isActive = false;
-  else if (kind === "status") {
-    name = slot.statusLabel || "";
-    // Default to "off" until the first status:update arrives from the GUI's live
-    // MIDI/process detection (Feature A) — see applyLiveStatusColors() below.
-    color = CONSOLE1_STATUS_OFF_COLOR;
-    send1On = true;
-    send2On = true;
-    send3On = true;
-    send4On = true;
-    send5On = true;
-    send6On = true;
-  } else if (kind === "start") {
-    const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_START_COLOR, CONSOLE1_STOP_COLOR);
-    name = display.name;
-    color = display.color;
-    send1On = true;
-    send2On = true;
-    send3On = true;
-    send4On = true;
-    send5On = true;
-    send6On = true;
-  }
 
   return {
     track: objectId + 1,
@@ -1828,28 +1779,6 @@ function getOrCreateTrackInfo(objectId) {
 }
 
 /**
- * Reset the per-track cache for real channel slots (input/bus/main) only, preserving the
- * status/Start bank's cached tracks (objectId 0..START_SLOT_OBJECT_ID).
- *
- * The status/Start bank's colors are driven by `applyLiveStatusColors()`/
- * `applyStartSlotDisplay()` independently of the Mixing Station connection — wiping the whole
- * `tracksByObjectId` cache on every MS (re)connect reset those slots to their `createDefaultTrackForSlot`
- * default (status = off/red) until the next status tick or lifecycle change repopulated them,
- * causing a visible red flash on every Start/live-config-apply.
- *
- * @example
- * resetRealChannelTrackCache(); // tracksByObjectId now only has objectId 0..9
- */
-function resetRealChannelTrackCache() {
-  /** @type {Record<number, TrackInfo>} */
-  const preserved = {};
-  for (let objectId = 0; objectId <= START_SLOT_OBJECT_ID; objectId++) {
-    if (tracksByObjectId[objectId]) preserved[objectId] = tracksByObjectId[objectId];
-  }
-  tracksByObjectId = preserved;
-}
-
-/**
  * Resolve a Console 1 `trackId` to our internal `objectId`.
  *
  * @param {string|number} trackId
@@ -1873,126 +1802,21 @@ function getObjectIdForTrackId(trackId) {
   return undefined;
 }
 
-// ###################################
-// ######## STATUS/START BANK ########
-// ###################################
-/**
- * Update the 7 status indicator slots' colors from a live status snapshot (Feature A's
- * `computeStatus()` shape, forwarded from the GUI via `status:update`). Applies regardless
- * of lifecycle state — this only touches per-slot cached track objects (creating them on
- * demand via `getOrCreateTrackInfo`) and sends targeted updates via `queueConsole1TrackUpdate`,
- * never `finalizeInitialization()`/`batchSendAllTracks()`, so it carries none of the
- * standby-leak risk those functions do.
- * @param {Record<string, boolean|undefined>} status - a missing/non-boolean value for a key
- *   is treated as "off" by `statusSlotColorFor`, not an error.
- */
-function applyLiveStatusColors(status) {
-  for (let objectId = 0; objectId < trackLayout.length; objectId++) {
-    const slot = trackLayout[objectId];
-    if (!slot || slot.kind !== "status") continue;
-
-    const track = getOrCreateTrackInfo(objectId);
-    const color = statusSlotColorFor(
-      status[slot.statusKey],
-      CONSOLE1_STATUS_ON_COLOR,
-      CONSOLE1_STATUS_OFF_COLOR
-    );
-    if (track.color !== color) {
-      track.color = color;
-      // Force-send: status indicators must work in standby too, before Console 1 has ever
-      // acked a handshake (osdEnabled false) — same reasoning as sendStatusBankTracks()'s
-      // forced sends. Without this, the color change lands in the cache (so the diff check
-      // above won't fire again for the same value) but the SysEx update itself is silently
-      // dropped until something else forces a resync (e.g. pressing Start).
-      queueConsole1TrackUpdate(track.trackId, { color }, { forceSend: true });
-    }
-  }
-}
-
-/**
- * Push the Start slot's current name/color (per `bridgeLifecycle`) to Console 1. Creates the
- * track on demand if it doesn't exist yet. No-ops if nothing actually changed.
- */
-function applyStartSlotDisplay() {
-  const track = getOrCreateTrackInfo(START_SLOT_OBJECT_ID);
-  const display = startSlotDisplayFor(bridgeLifecycle, CONSOLE1_START_COLOR, CONSOLE1_STOP_COLOR);
-  /** @type {Record<string, any>} */
-  const partial = {};
-  if (track.name !== display.name) {
-    track.name = display.name;
-    partial.name = display.name;
-  }
-  if (track.color !== display.color) {
-    track.color = display.color;
-    partial.color = display.color;
-  }
-  // Force-send: same standby-before-handshake reasoning as applyLiveStatusColors() above.
-  if (Object.keys(partial).length > 0) {
-    queueConsole1TrackUpdate(track.trackId, partial, { forceSend: true });
-  }
-}
-
-/**
- * Send just the status/Start bank (bank 0) tracks — creating any not-yet-cached ones first.
- * Used when entering standby, where the real channel banks aren't relevant.
- * @param {boolean} [forceSend=false]
- */
-function sendStatusBankTracks(forceSend = false) {
-  /** @type {any[]} */
-  const batch = [];
-  for (let objectId = 0; objectId < START_SLOT_OBJECT_ID + 1; objectId++) {
-    batch.push(getOrCreateTrackInfo(objectId));
-  }
-  sendSysexToConsole1({ trackBatch: batch }, forceSend);
-}
-
-/**
- * Deactivate all non-status/start tracks (the real input/bus/main channels), leaving the
- * status/Start bank visible. Used when entering standby — unlike the full
- * `batchDeactivateAllTracks()` used at true process shutdown, this keeps bank 0 alive.
- * @param {boolean} [forceSend=false]
- */
-function deactivateRealChannelTracks(forceSend = false) {
-  const keys = Object.keys(tracksByObjectId);
-  /** @type {{trackId: string, isActive: boolean}[]} */
-  let batch = [];
-
-  for (const key of keys) {
-    const objectId = parseInt(key, 10);
-    const slot = trackLayout[objectId];
-    if (slot && (slot.kind === "status" || slot.kind === "start")) continue;
-
-    const track = tracksByObjectId[key];
-    if (!track || track.trackId === undefined || track.trackId === null) continue;
-    batch.push({ trackId: track.trackId, isActive: false });
-    if (batch.length >= 100) {
-      sendSysexToConsole1({ trackBatch: batch }, forceSend);
-      batch = [];
-    }
-  }
-
-  if (batch.length > 0) {
-    sendSysexToConsole1({ trackBatch: batch }, forceSend);
-  }
-}
-
 // ####################################
 // ######### BRIDGE LIFECYCLE #########
 // ####################################
 /**
  * Bridge lifecycle state (distinct from the unrelated "Standard"/"Sends" mode concept
  * tracked via `setSendsMode`/console logs prefixed `[Mode]` — this one uses `[Lifecycle]`).
- * - `"standby"`: Console 1 Fader MIDI held, status/Start bank shown, no Mixing Station connection.
- * - `"running"`: full bridging active (today's original behavior), plus the status/Start bank.
+ * - `"standby"`: Console 1 Fader MIDI held, no Mixing Station connection.
+ * - `"running"`: full bridging active.
  * @type {"standby"|"running"}
  */
 let bridgeLifecycle = "standby";
 
 /**
- * Enter `standby`: disconnect from Mixing Station (if connected), deactivate the real
- * channel banks' display, and show "Start"/`CONSOLE1_START_COLOR` on the Start slot. The
- * status/Start bank itself stays visible throughout — this is also used as the bridge's
- * initial state at process start.
+ * Enter `standby`: disconnect from Mixing Station (if connected) and deactivate the real
+ * channel banks' display. This is also used as the bridge's initial state at process start.
  */
 function enterStandbyState() {
   // Set before closing the socket: the WS "close" handler below reads this to decide
@@ -2012,15 +1836,12 @@ function enterStandbyState() {
     wsReconnectTimeout = null;
   }
 
-  deactivateRealChannelTracks(true);
-  sendStatusBankTracks(true);
-  applyStartSlotDisplay();
+  batchDeactivateAllTracks(true);
 }
 
 /**
- * Enter `running`: apply the given config, connect to Mixing Station, rebuild the full
- * track layout (status bank + real channel banks), and show "Stop"/`CONSOLE1_STOP_COLOR` on
- * the Start slot.
+ * Enter `running`: apply the given config, connect to Mixing Station, and rebuild the full
+ * track layout.
  * @param {BridgeConfig} config
  */
 function enterRunningState(config) {
@@ -2031,7 +1852,6 @@ function enterRunningState(config) {
   rebuildTrackLayout();
   forceConsole1FullResync("lifecycle:start");
   connectMixingStationWebSocket();
-  applyStartSlotDisplay();
 }
 
 // ####################################
@@ -2176,57 +1996,25 @@ const console1UpdateQueue = new Map();
 /**
  * Queue a partial track update to Console 1 (batched + throttled).
  *
- * By default, queued updates are dropped at flush time if `osdEnabled` is false (Console 1
- * hasn't acked a handshake yet) — matching the semantics `sendSysexToConsole1` already uses
- * for non-forced sends. Pass `forceSend: true` for updates that must reach Console 1
- * regardless (e.g. the status/Start bank, which — like `sendStatusBankTracks()` and
- * `deactivateRealChannelTracks()` — must work in standby, before any handshake happens).
- * If a trackId has both forced and non-forced updates queued in the same flush window, the
- * merged update is sent as forced (once forced, always forced for that flush).
- *
  * @example
  * queueConsole1TrackUpdate(track.trackId, { volume: -Infinity, mute: true });
- * queueConsole1TrackUpdate(track.trackId, { color }, { forceSend: true });
  *
  * @param {string} trackId
  * @param {Record<string, any>} partial
- * @param {{forceSend?: boolean}} [opts]
  */
-function queueConsole1TrackUpdate(trackId, partial, opts = {}) {
+function queueConsole1TrackUpdate(trackId, partial) {
   if (!partial || Object.keys(partial).length === 0) return;
-  const prev = console1UpdateQueue.get(trackId) || { trackId, __forceSend: false };
-  const forceSend = !!prev.__forceSend || !!opts.forceSend;
-  console1UpdateQueue.set(trackId, { ...prev, ...partial, trackId, __forceSend: forceSend });
+  const prev = console1UpdateQueue.get(trackId) || { trackId };
+  console1UpdateQueue.set(trackId, { ...prev, ...partial, trackId });
 
   if (console1FlushTimer) return;
   console1FlushTimer = setTimeout(() => {
     console1FlushTimer = null;
-    if (console1UpdateQueue.size === 0) return;
-
-    // Forced entries always go out now, regardless of osdEnabled, and are removed from the
-    // queue. Non-forced entries are left in place (same as the pre-forceSend behavior) if
-    // osdEnabled is false, so they keep accumulating with later updates for the same trackId
-    // until a flush happens to run while osdEnabled is true.
-    /** @type {object[]} */
-    const forced = [];
-    for (const entry of console1UpdateQueue.values()) {
-      if (entry.__forceSend) forced.push(entry);
-    }
-    for (const entry of forced) console1UpdateQueue.delete(entry.trackId);
-
-    for (let i = 0; i < forced.length; i += 100) {
-      const batch = forced.slice(i, i + 100).map(({ __forceSend, ...rest }) => rest);
-      sendSysexToConsole1({ trackBatch: batch }, true);
-    }
-
-    if (osdEnabled && console1UpdateQueue.size > 0) {
-      const normal = Array.from(console1UpdateQueue.values()).map(
-        ({ __forceSend, ...rest }) => rest,
-      );
-      console1UpdateQueue.clear();
-      for (let i = 0; i < normal.length; i += 100) {
-        sendSysexToConsole1({ trackBatch: normal.slice(i, i + 100) });
-      }
+    if (!osdEnabled || console1UpdateQueue.size === 0) return;
+    const batch = Array.from(console1UpdateQueue.values());
+    console1UpdateQueue.clear();
+    for (let i = 0; i < batch.length; i += 100) {
+      sendSysexToConsole1({ trackBatch: batch.slice(i, i + 100) });
     }
   }, CONSOLE1_FLUSH_MS);
 }
@@ -2504,14 +2292,11 @@ function handleConsole1ControlJson(parsed) {
       startHandshake();
       if (bridgeLifecycle === "running") {
         scheduleConsole1FullResync("console reset");
-      } else {
-        // In standby there's no Mixing Station data to resync, and `finalizeInitialization()`
-        // (which `scheduleConsole1FullResync` schedules) would otherwise create AND activate
-        // default tracks for every real channel slot in `trackLayout`, undoing standby's
-        // deactivation. Just re-affirm the status/Start bank instead.
-        sendStatusBankTracks(true);
-        applyStartSlotDisplay();
       }
+      // In standby there's no Mixing Station data to resync, and `finalizeInitialization()`
+      // (which `scheduleConsole1FullResync` schedules) would otherwise create AND activate
+      // default tracks for every real channel slot in `trackLayout`, undoing standby's
+      // deactivation. Nothing else to do — standby has no active tracks to re-affirm.
       return;
     }
     if (parsed.cmd === "ENABLE") {
@@ -3353,44 +3138,6 @@ function resolveMidiTrackContext(parsed) {
 }
 
 /**
- * Handle an incoming Console 1 MIDI message for a status/Start bank slot (bank 0). These
- * slots have no Mixing Station channel, so no MS writes are ever produced here — only the
- * Start slot's `selected` field is meaningful, as the hardware Start/Stop trigger.
- *
- * For a normal track, Console 1's `selected` state gets cleared back to `false` indirectly,
- * via Mixing Station echoing `ch.N.selected=false` back over the WS once another channel is
- * selected (see `handleMidiSelectedUpdate`). The Start slot has no MS channel backing it, so
- * nothing would ever clear it the same way. Pushing `selected:false` for the Start slot's own
- * trackId alone was NOT enough on real hardware (confirmed by testing) — Console 1 appears to
- * track "currently selected object" as its own internal, mutually-exclusive latch that only
- * moves when a *different* object gets selected, not from a background field update to the
- * already-selected one. So in addition to echoing `selected:false` here, force-select a
- * neighboring slot to reproduce the "select a different track" workaround that's confirmed
- * to un-latch it. Must be an ACTIVE slot — the empty spacer right before Start
- * (`isActive:false`, see `createDefaultTrackForSlot`) can't be selected on real hardware
- * (confirmed by testing: targeting it did not fix the latch), so this targets
- * `START_SLOT_OBJECT_ID - 2`, the last status indicator slot (always active), instead.
- *
- * @param {any} parsed
- * @param {TrackLayoutSlot} slot
- */
-function handleStatusOrStartSlotMidiMessage(parsed, slot) {
-  if (slot.kind !== "start") return;
-  const triggerType = hardwareTriggerTypeFor(bridgeLifecycle, parsed.selected);
-  if (!triggerType) return;
-  console.log(`[Lifecycle] hardware trigger: ${triggerType}`);
-  process.stdout.write(`@@BRIDGE_EVENT@@${JSON.stringify({ type: `hardware:${triggerType}` })}\n`);
-
-  const track = getOrCreateTrackInfo(slot.objectId);
-  track.selected = false;
-  queueConsole1TrackUpdate(track.trackId, { selected: false }, { forceSend: true });
-
-  const neighborTrack = getOrCreateTrackInfo(START_SLOT_OBJECT_ID - 2);
-  neighborTrack.selected = true;
-  queueConsole1TrackUpdate(neighborTrack.trackId, { selected: true }, { forceSend: true });
-}
-
-/**
  * Handles incoming MIDI messages, specifically SysEx JSON messages, and processes them
  * according to their type. Delegates control messages to `handleConsole1ControlJson`,
  * and for track-related messages, updates volume, mute, solo, pan, selection, and send slots.
@@ -3412,19 +3159,6 @@ function handleMidiMessage(deltaTime, message) {
   }
 
   if (!parsed.trackId) return;
-
-  // Status/Start bank slots aren't backed by any Mixing Station channel — handle them
-  // separately, before the normal MS-channel-driven dispatch below (which assumes a real
-  // `msPrimary` and would otherwise silently drop these via `resolveMidiTrackContext`'s
-  // `msPrimary !== null` guard).
-  const earlyObjectId = getObjectIdForTrackId(parsed.trackId);
-  if (Number.isInteger(earlyObjectId)) {
-    const earlySlot = trackLayout[earlyObjectId];
-    if (earlySlot && (earlySlot.kind === "status" || earlySlot.kind === "start")) {
-      handleStatusOrStartSlotMidiMessage(parsed, earlySlot);
-      return;
-    }
-  }
 
   const ctx = resolveMidiTrackContext(parsed);
   if (!ctx) return;
@@ -3533,7 +3267,7 @@ async function startBridgeProcess() {
 
   // Build initial track layout early so any Console 1 traffic can be mapped, then enter
   // standby — the process starts in standby and stays there until a `lifecycle:start`
-  // stdin message (from the GUI's Start button, CLI flag, or the hardware Start slot).
+  // stdin message (from the GUI's Start button or a CLI flag).
   rebuildTrackLayout();
   enterStandbyState();
 
