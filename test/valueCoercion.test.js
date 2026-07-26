@@ -8,6 +8,7 @@ const {
   normalizeConsole1LevelForMs,
   trimStereoSuffixFromName,
   coerceConsole1NumericString,
+  readC1DspValue,
   coerceWsPayloadToText,
 } = require("../valueCoercion");
 
@@ -96,6 +97,27 @@ test("coerceConsole1NumericString: non-numeric strings and non-strings pass thro
   assert.equal(coerceConsole1NumericString("abc"), "abc");
   assert.equal(coerceConsole1NumericString(5), 5);
   assert.equal(coerceConsole1NumericString(true), true);
+});
+
+test("readC1DspValue: unwraps a {value: ...}-wrapped field", () => {
+  assert.strictEqual(readC1DspValue({ value: 0.5 }), 0.5);
+});
+
+test("readC1DspValue: unwraps a {value: ...}-wrapped boolean field", () => {
+  assert.strictEqual(readC1DspValue({ value: true }), true);
+});
+
+test("readC1DspValue: passes through a bare (non-wrapped) value unchanged", () => {
+  assert.strictEqual(readC1DspValue(0.5), 0.5);
+  assert.strictEqual(readC1DspValue(true), true);
+});
+
+test("readC1DspValue: returns undefined for an undefined field", () => {
+  assert.strictEqual(readC1DspValue(undefined), undefined);
+});
+
+test("readC1DspValue: returns null unchanged (not undefined) for a null field", () => {
+  assert.strictEqual(readC1DspValue(null), null);
 });
 
 test("coerceWsPayloadToText: string input passes through", () => {

@@ -128,6 +128,23 @@ function coerceConsole1NumericString(value) {
 }
 
 /**
+ * Console 1's DSP-section fields (Filter/EQ/Compressor) arrive `{value: ...}`-wrapped,
+ * unlike the bare mixer primitives (`volume`, `mute`, `pan`). Unwraps either shape.
+ * @param {any} field
+ * @returns {any} `undefined` iff the field itself is `undefined` (missing from the
+ *   SysEx payload) — the standard "field not present" signal the handlers guard on.
+ * @example
+ * readC1DspValue({ value: 0.5 }); // 0.5
+ * readC1DspValue(0.5); // 0.5
+ * readC1DspValue(undefined); // undefined
+ */
+function readC1DspValue(field) {
+  if (field === undefined) return undefined;
+  if (field !== null && typeof field === "object" && "value" in field) return field.value;
+  return field;
+}
+
+/**
  * Coerce a raw WebSocket message payload (string, Buffer, Uint8Array, or ArrayBuffer) into text.
  * @param {string|Buffer|Uint8Array|ArrayBuffer} data
  * @returns {string}
@@ -155,5 +172,6 @@ module.exports = {
   normalizeConsole1LevelForMs,
   trimStereoSuffixFromName,
   coerceConsole1NumericString,
+  readC1DspValue,
   coerceWsPayloadToText,
 };
