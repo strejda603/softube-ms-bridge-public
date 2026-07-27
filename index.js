@@ -35,6 +35,7 @@ const {
   trimStereoSuffixFromName,
   coerceConsole1NumericString,
   coerceWsPayloadToText,
+  readC1DspValue,
 } = require("./valueCoercion");
 
 // ###################################
@@ -49,6 +50,7 @@ const SYSEX_MAGIC = [115, 116, 99, 49]; // "stc1"
 // --- Mixing Station API config ---
 let MIXING_STATION_WS_URL = "ws://localhost:8080";
 const NUMBER_OF_SENDS = 6; // Console 1 has 6 send slots
+const EQ_BAND_COUNT = 4; // Console 1 has 4 parametric EQ bands
 let LOG_JSON = false; // Set to true to log all JSON messages to/from Mixing Station
 let LOG_METERING = false; // Set to true to log metering subscription + incoming metering frames
 
@@ -1708,6 +1710,36 @@ function createDefaultTrackForSlot(objectId) {
     send5: 0,
     send6On: send6On,
     send6: 0,
+    filterLcOn: false,
+    filterLcFreq: 0,
+    eq1On: false,
+    eq1Freq: 0.5,
+    eq1Gain: 0.5,
+    eq1Q: 0.5,
+    eq1Type: 0,
+    eq2On: false,
+    eq2Freq: 0.5,
+    eq2Gain: 0.5,
+    eq2Q: 0.5,
+    eq2Type: 0,
+    eq3On: false,
+    eq3Freq: 0.5,
+    eq3Gain: 0.5,
+    eq3Q: 0.5,
+    eq3Type: 0,
+    eq4On: false,
+    eq4Freq: 0.5,
+    eq4Gain: 0.5,
+    eq4Q: 0.5,
+    eq4Type: 0,
+    compOn: false,
+    compRatio: 0,
+    compAttack: 0,
+    compRelease: 0,
+    compMakeup: 0,
+    compComp: 0,
+    compKnee: 0,
+    compWetdry: 0,
   };
 }
 
