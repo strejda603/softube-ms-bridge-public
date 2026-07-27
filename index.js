@@ -51,6 +51,22 @@ const SYSEX_MAGIC = [115, 116, 99, 49]; // "stc1"
 let MIXING_STATION_WS_URL = "ws://localhost:8080";
 const NUMBER_OF_SENDS = 6; // Console 1 has 6 send slots
 const EQ_BAND_COUNT = 4; // Console 1 has 4 parametric EQ bands
+
+/**
+ * Console 1 Compressor field -> Mixing Station `dyn.*` field, for the 1:1 fields.
+ * `compOn` is handled separately (needs boolean 0/1 val, not norm).
+ * @type {Array<{c1: string, ms: string}>}
+ */
+const COMP_CONTINUOUS_FIELD_MAP = [
+  { c1: "compRatio", ms: "ratio" },
+  { c1: "compAttack", ms: "attack" },
+  { c1: "compRelease", ms: "release" },
+  { c1: "compMakeup", ms: "gain" },
+  { c1: "compComp", ms: "thr" },
+  { c1: "compKnee", ms: "knee" },
+  { c1: "compWetdry", ms: "mix" },
+];
+
 let LOG_JSON = false; // Set to true to log all JSON messages to/from Mixing Station
 let LOG_METERING = false; // Set to true to log metering subscription + incoming metering frames
 
@@ -3265,6 +3281,45 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
 }
 
 /**
+ * Handle Compressor updates from Console 1 (`compOn`, plus the continuous fields in
+ * `COMP_CONTINUOUS_FIELD_MAP`). `compAttackShift` has no Mixing Station analog and is
+ * not handled (see design doc).
+ *
+ * None of this handler's fields have been independently hardware-verified (only
+ * `filterLcFreq` in the Filter handler has), so their exact wire encoding is inferred
+ * from Softube's Cubase driver script, not confirmed against real Console 1 hardware.
+ *
+ * @param {any} parsed
+ * @param {TrackLayoutSlot} slot
+ * @param {TrackInfo} track
+ * @param {Array<{msPath:string,value:any,format?:string}>} writes
+ */
+function handleMidiCompUpdate(parsed, slot, track, writes) {
+  if (slot.kind !== "input" && !isBusOrMain(slot)) return;
+
+  const on = readC1DspValue(parsed.compOn);
+  if (on !== undefined) {
+    const nextOn = !!on;
+    track.compOn = nextOn;
+    queueConsole1TrackUpdate(track.trackId, { compOn: { value: nextOn } });
+    for (const ch of slot.msChannels) {
+      writes.push({ msPath: `ch.${ch}.dyn.on`, value: nextOn ? 1 : 0 });
+    }
+  }
+
+  for (const { c1, ms } of COMP_CONTINUOUS_FIELD_MAP) {
+    const raw = readC1DspValue(parsed[c1]);
+    if (raw === undefined) continue;
+    const next = clamp01(Number(raw));
+    track[c1] = next;
+    queueConsole1TrackUpdate(track.trackId, { [c1]: { value: next } });
+    for (const ch of slot.msChannels) {
+      writes.push({ msPath: `ch.${ch}.dyn.${ms}`, value: next, format: "norm" });
+    }
+  }
+}
+
+/**
  * Resolve all per-track context needed to handle a Console 1 track SysEx update.
  *
  * Returns null if the message can't be mapped to a valid layout slot.
@@ -3329,6 +3384,7 @@ function handleMidiMessage(deltaTime, message) {
   handleMidiSendSlotsUpdate(parsed, slot, track, writes);
   handleMidiFilterUpdate(parsed, slot, track, writes);
   handleMidiEqUpdate(parsed, slot, track, writes);
+  handleMidiCompUpdate(parsed, slot, track, writes);
 
   for (const w of writes) {
     queueMsWrite(w.msPath, w.value, w.format || "val");
