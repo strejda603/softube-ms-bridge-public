@@ -3143,6 +3143,47 @@ function handleMidiSendSlotsUpdate(parsed, slot, track, writes) {
 }
 
 /**
+ * Handle Filter (low-cut) updates from Console 1.
+ *
+ * Console 1's Filter section also has a high-cut stage (`filterHcOn`/`filterHcFreq`),
+ * plus phase-invert/pre-gain/slope fields — none of those have a Mixing Station
+ * destination (`preamp.filter.0` is a single filter stage, not a pair), so only
+ * low-cut is mapped. See the design doc for the full rationale.
+ *
+ * @param {any} parsed
+ * @param {TrackLayoutSlot} slot
+ * @param {TrackInfo} track
+ * @param {Array<{msPath:string,value:any,format?:string}>} writes
+ */
+function handleMidiFilterUpdate(parsed, slot, track, writes) {
+  if (slot.kind !== "input" && !isBusOrMain(slot)) return;
+
+  const lcOn = readC1DspValue(parsed.filterLcOn);
+  if (lcOn !== undefined) {
+    const nextOn = !!lcOn;
+    track.filterLcOn = nextOn;
+    queueConsole1TrackUpdate(track.trackId, { filterLcOn: { value: nextOn } });
+    for (const ch of slot.msChannels) {
+      writes.push({ msPath: `ch.${ch}.preamp.filter.0.on`, value: nextOn ? 1 : 0 });
+    }
+  }
+
+  const lcFreq = readC1DspValue(parsed.filterLcFreq);
+  if (lcFreq !== undefined) {
+    const nextFreq = clamp01(Number(lcFreq));
+    track.filterLcFreq = nextFreq;
+    queueConsole1TrackUpdate(track.trackId, { filterLcFreq: { value: nextFreq } });
+    for (const ch of slot.msChannels) {
+      writes.push({
+        msPath: `ch.${ch}.preamp.filter.0.freq`,
+        value: nextFreq,
+        format: "norm",
+      });
+    }
+  }
+}
+
+/**
  * Resolve all per-track context needed to handle a Console 1 track SysEx update.
  *
  * Returns null if the message can't be mapped to a valid layout slot.
@@ -3205,6 +3246,7 @@ function handleMidiMessage(deltaTime, message) {
   handleMidiPanUpdate(parsed, slot, track, primaryChannel, writes);
   handleMidiSelectedUpdate(parsed, slot, primaryChannel, writes);
   handleMidiSendSlotsUpdate(parsed, slot, track, writes);
+  handleMidiFilterUpdate(parsed, slot, track, writes);
 
   for (const w of writes) {
     queueMsWrite(w.msPath, w.value, w.format || "val");
