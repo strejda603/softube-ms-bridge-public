@@ -3184,6 +3184,87 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
 }
 
 /**
+ * Handle 4-band parametric EQ updates from Console 1 (`eq1..eq4` × `On/Freq/Gain/Q/Type`).
+ *
+ * `eq{N}On` (per-band on/off) has no Mixing Station destination — MS only exposes a
+ * single global `peq.on`, not per-band — so it's echoed back to Console 1 (to avoid a
+ * visual snap-back on the OSD, same reasoning as the optimistic updates elsewhere in
+ * this file) but never written to Mixing Station. `eq{N}Type` is a discrete index, not
+ * a continuous 0..1 value, so it's passed through as a raw integer rather than clamped.
+ *
+ * @param {any} parsed
+ * @param {TrackLayoutSlot} slot
+ * @param {TrackInfo} track
+ * @param {Array<{msPath:string,value:any,format?:string}>} writes
+ */
+function handleMidiEqUpdate(parsed, slot, track, writes) {
+  if (slot.kind !== "input" && !isBusOrMain(slot)) return;
+
+  for (let n = 1; n <= EQ_BAND_COUNT; n++) {
+    const bandIndex = n - 1;
+
+    const on = readC1DspValue(parsed[`eq${n}On`]);
+    if (on !== undefined) {
+      const nextOn = !!on;
+      track[`eq${n}On`] = nextOn;
+      queueConsole1TrackUpdate(track.trackId, { [`eq${n}On`]: { value: nextOn } });
+    }
+
+    const freq = readC1DspValue(parsed[`eq${n}Freq`]);
+    if (freq !== undefined) {
+      const next = clamp01(Number(freq));
+      track[`eq${n}Freq`] = next;
+      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Freq`]: { value: next } });
+      for (const ch of slot.msChannels) {
+        writes.push({
+          msPath: `ch.${ch}.peq.bands.${bandIndex}.freq`,
+          value: next,
+          format: "norm",
+        });
+      }
+    }
+
+    const gain = readC1DspValue(parsed[`eq${n}Gain`]);
+    if (gain !== undefined) {
+      const next = clamp01(Number(gain));
+      track[`eq${n}Gain`] = next;
+      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Gain`]: { value: next } });
+      for (const ch of slot.msChannels) {
+        writes.push({
+          msPath: `ch.${ch}.peq.bands.${bandIndex}.gain`,
+          value: next,
+          format: "norm",
+        });
+      }
+    }
+
+    const q = readC1DspValue(parsed[`eq${n}Q`]);
+    if (q !== undefined) {
+      const next = clamp01(Number(q));
+      track[`eq${n}Q`] = next;
+      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Q`]: { value: next } });
+      for (const ch of slot.msChannels) {
+        writes.push({
+          msPath: `ch.${ch}.peq.bands.${bandIndex}.q`,
+          value: next,
+          format: "norm",
+        });
+      }
+    }
+
+    const type = readC1DspValue(parsed[`eq${n}Type`]);
+    if (type !== undefined) {
+      const next = Number(type);
+      track[`eq${n}Type`] = next;
+      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Type`]: { value: next } });
+      for (const ch of slot.msChannels) {
+        writes.push({ msPath: `ch.${ch}.peq.bands.${bandIndex}.type`, value: next });
+      }
+    }
+  }
+}
+
+/**
  * Resolve all per-track context needed to handle a Console 1 track SysEx update.
  *
  * Returns null if the message can't be mapped to a valid layout slot.
@@ -3247,6 +3328,7 @@ function handleMidiMessage(deltaTime, message) {
   handleMidiSelectedUpdate(parsed, slot, primaryChannel, writes);
   handleMidiSendSlotsUpdate(parsed, slot, track, writes);
   handleMidiFilterUpdate(parsed, slot, track, writes);
+  handleMidiEqUpdate(parsed, slot, track, writes);
 
   for (const w of writes) {
     queueMsWrite(w.msPath, w.value, w.format || "val");
