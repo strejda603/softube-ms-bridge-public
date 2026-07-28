@@ -52,6 +52,15 @@ let MIXING_STATION_WS_URL = "ws://localhost:8080";
 const NUMBER_OF_SENDS = 6; // Console 1 has 6 send slots
 const EQ_BAND_COUNT = 4; // Console 1 has 4 parametric EQ bands
 
+// Max full track objects per SysEx `trackBatch` message (not used for the tiny
+// {trackId, isActive}-only deactivation batches, which stay at a fixed 100). Full track
+// objects grew significantly once Filter/EQ/Compressor fields were added, and a single
+// oversized SysEx message can silently exceed Console 1's firmware receive buffer — no
+// software error, the hardware just never shows the tracks. Chosen conservatively so a
+// full-track chunk's byte size stays comfortably under the largest size previously
+// confirmed to work (~24.5KB for a ~60-70 track dump using the pre-DSP field set).
+const CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE = 30;
+
 /**
  * Console 1 Compressor field -> Mixing Station `dyn.*` field, for the 1:1 fields.
  * `compOn` is handled separately (needs boolean 0/1 val, not norm).
@@ -74,6 +83,33 @@ const COMP_CONTINUOUS_FIELD_MAP = [
  */
 const DYN_TO_C1 = Object.fromEntries(COMP_CONTINUOUS_FIELD_MAP.map((m) => [m.ms, m.c1]));
 DYN_TO_C1.on = "compOn";
+
+/**
+ * Filter/EQ/Compressor field names that must NEVER appear in outbound SysEx to Console 1.
+ *
+ * This Fader Mk III unit's firmware rejects the ENTIRE `trackBatch` message if it
+ * contains any field name outside its fixed mixer schema (confirmed via real-hardware
+ * A/B testing — bare values, `{value}`-wrapped values, and even a nonsense field name
+ * all broke track display identically). These fields are still tracked internally (on
+ * cached `TrackInfo` objects, populated from both Console 1 SysEx and Mixing Station
+ * updates) for bookkeeping/future use — they're stripped centrally in
+ * `sendSysexToConsole1` rather than by never setting them, so this protection can't be
+ * silently bypassed by a future caller that serializes a track object directly.
+ * @type {Set<string>}
+ */
+const CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS = new Set([
+  "filterLcOn",
+  "filterLcFreq",
+  ...Array.from({ length: EQ_BAND_COUNT }, (_, i) => i + 1).flatMap((n) => [
+    `eq${n}On`,
+    `eq${n}Freq`,
+    `eq${n}Gain`,
+    `eq${n}Q`,
+    `eq${n}Type`,
+  ]),
+  "compOn",
+  ...COMP_CONTINUOUS_FIELD_MAP.map((m) => m.c1),
+]);
 
 let LOG_JSON = false; // Set to true to log all JSON messages to/from Mixing Station
 let LOG_METERING = false; // Set to true to log metering subscription + incoming metering frames
@@ -1958,6 +1994,15 @@ function applyMsParamToTrack(track, paramPath, value) {
     }
   };
 
+  // Filter/EQ/Compressor fields: cache-only, deliberately never added to `changed`.
+  // This Fader Mk III unit's firmware rejects the ENTIRE outbound `trackBatch` SysEx
+  // message if it contains any field name outside its fixed mixer schema (confirmed via
+  // real-hardware A/B testing), so these fields must never reach `queueConsole1TrackUpdate`
+  // — only `changed`-based fields (mute/pan/sends/etc.) get echoed back to hardware.
+  const setCacheOnly = (field, next) => {
+    track[field] = next;
+  };
+
   switch (paramPath) {
     case "cfg.name":
       if (typeof value !== "string") break;
@@ -2000,10 +2045,10 @@ function applyMsParamToTrack(track, paramPath, value) {
       setIfChanged("selected", !!value);
       break;
     case "preamp.filter.0.on":
-      setIfChanged("filterLcOn", !!value);
+      setCacheOnly("filterLcOn", !!value);
       break;
     case "preamp.filter.0.freq":
-      setIfChanged("filterLcFreq", value);
+      setCacheOnly("filterLcFreq", value);
       break;
     default: {
       const sendMatch = paramPath.match(/^mix\.sends\.(\d+)\.(lvl|on)$/);
@@ -2031,7 +2076,7 @@ function applyMsParamToTrack(track, paramPath, value) {
         const field = eqMatch[2];
         if (bandNumber < 1 || bandNumber > EQ_BAND_COUNT) break;
         const key = `eq${bandNumber}${field === "q" ? "Q" : field[0].toUpperCase() + field.slice(1)}`;
-        setIfChanged(key, value);
+        setCacheOnly(key, value);
         break;
       }
 
@@ -2039,8 +2084,8 @@ function applyMsParamToTrack(track, paramPath, value) {
       if (dynMatch) {
         const field = dynMatch[1];
         const key = DYN_TO_C1[field];
-        if (field === "on") setIfChanged(key, !!value);
-        else setIfChanged(key, value);
+        if (field === "on") setCacheOnly(key, !!value);
+        else setCacheOnly(key, value);
         break;
       }
 
@@ -2112,11 +2157,36 @@ function queueConsole1TrackUpdate(trackId, partial) {
   if (console1FlushTimer) return;
   console1FlushTimer = setTimeout(() => {
     console1FlushTimer = null;
-    if (!osdEnabled || console1UpdateQueue.size === 0) return;
-    const batch = Array.from(console1UpdateQueue.values());
-    console1UpdateQueue.clear();
-    for (let i = 0; i < batch.length; i += 100) {
-      sendSysexToConsole1({ trackBatch: batch.slice(i, i + 100) });
+    if (console1UpdateQueue.size === 0) return;
+
+    // Forced entries always go out now, regardless of osdEnabled, and are removed from the
+    // queue. Non-forced entries are left in place (same as the pre-forceSend behavior) if
+    // osdEnabled is false, so they keep accumulating with later updates for the same trackId
+    // until a flush happens to run while osdEnabled is true.
+    /** @type {object[]} */
+    const forced = [];
+    for (const entry of console1UpdateQueue.values()) {
+      if (entry.__forceSend) forced.push(entry);
+    }
+    for (const entry of forced) console1UpdateQueue.delete(entry.trackId);
+
+    for (let i = 0; i < forced.length; i += CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE) {
+      const batch = forced
+        .slice(i, i + CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE)
+        .map(({ __forceSend, ...rest }) => rest);
+      sendSysexToConsole1({ trackBatch: batch }, true);
+    }
+
+    if (osdEnabled && console1UpdateQueue.size > 0) {
+      const normal = Array.from(console1UpdateQueue.values()).map(
+        ({ __forceSend, ...rest }) => rest,
+      );
+      console1UpdateQueue.clear();
+      for (let i = 0; i < normal.length; i += CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE) {
+        sendSysexToConsole1({
+          trackBatch: normal.slice(i, i + CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE),
+        });
+      }
     }
   }, CONSOLE1_FLUSH_MS);
 }
@@ -2243,7 +2313,12 @@ function sendSysexToConsole1(jsonObj, forceSend = false) {
   data.push(SYSEX_MANUFACTURER);
   data = data.concat(SYSEX_MAGIC);
 
-  function fixNegativeInf(key, value) {
+  function sysexJsonReplacer(key, value) {
+    // Never let Filter/EQ/Compressor fields reach Console 1 outbound — see
+    // CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS' JSDoc for why. Returning `undefined` from a
+    // JSON.stringify replacer omits the key entirely.
+    if (CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS.has(key)) return undefined;
+
     // -Infinity is not supported by JSON, but OSD expects "-Infinity" as a string
     if (typeof value === "number" && value === -Infinity) {
       return "-Infinity";
@@ -2251,7 +2326,7 @@ function sendSysexToConsole1(jsonObj, forceSend = false) {
     return value;
   }
 
-  const jsonStr = JSON.stringify(jsonObj, fixNegativeInf);
+  const jsonStr = JSON.stringify(jsonObj, sysexJsonReplacer);
   // Iterate by codepoints (handles surrogate pairs correctly).
   for (const ch of jsonStr) {
     const c = ch.codePointAt(0);
@@ -2303,7 +2378,8 @@ function startHandshake() {
 }
 
 /**
- * Sends all tracks in the track cache in batches of 100 as SysEx messages.
+ * Sends all tracks in the track cache in batches of `CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE`
+ * as SysEx messages.
  * @param {boolean} [forceSend=false] - If true, sends even when OSD is disabled.
  */
 function batchSendAllTracks(forceSend = false) {
@@ -2313,7 +2389,7 @@ function batchSendAllTracks(forceSend = false) {
   const keys = Object.keys(tracksByObjectId);
   for (let i = 0; i < keys.length; i++) {
     allTracksMsg.trackBatch.push(tracksByObjectId[keys[i]]);
-    if (allTracksMsg.trackBatch.length >= 100) {
+    if (allTracksMsg.trackBatch.length >= CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE) {
       sendSysexToConsole1(allTracksMsg, forceSend);
       allTracksMsg.trackBatch.length = 0;
     }
@@ -3220,6 +3296,14 @@ function handleMidiSendSlotsUpdate(parsed, slot, track, writes) {
  * destination (`preamp.filter.0` is a single filter stage, not a pair), so only
  * low-cut is mapped. See the design doc for the full rationale.
  *
+ * One-way (Console 1 -> Mixing Station) only: this Fader Mk III unit's firmware
+ * rejects the ENTIRE `trackBatch` SysEx message if it contains any field name outside
+ * its fixed mixer schema — confirmed via real-hardware A/B testing (bare, `{value}`-
+ * wrapped, and even a nonsense field name all broke track display identically). So
+ * these fields are read from hardware and written to Mixing Station, but NEVER echoed
+ * back via `queueConsole1TrackUpdate` — doing so silently breaks the display of every
+ * track, not just this one. See the design doc's regression note for the full story.
+ *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
  * @param {TrackInfo} track
@@ -3232,7 +3316,6 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
   if (lcOn !== undefined) {
     const nextOn = !!lcOn;
     track.filterLcOn = nextOn;
-    queueConsole1TrackUpdate(track.trackId, { filterLcOn: { value: nextOn } });
     for (const ch of slot.msChannels) {
       writes.push({ msPath: `ch.${ch}.preamp.filter.0.on`, value: nextOn ? 1 : 0 });
     }
@@ -3242,7 +3325,6 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
   if (lcFreq !== undefined) {
     const nextFreq = clamp01(Number(lcFreq));
     track.filterLcFreq = nextFreq;
-    queueConsole1TrackUpdate(track.trackId, { filterLcFreq: { value: nextFreq } });
     for (const ch of slot.msChannels) {
       writes.push({
         msPath: `ch.${ch}.preamp.filter.0.freq`,
@@ -3257,10 +3339,12 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
  * Handle 4-band parametric EQ updates from Console 1 (`eq1..eq4` × `On/Freq/Gain/Q/Type`).
  *
  * `eq{N}On` (per-band on/off) has no Mixing Station destination — MS only exposes a
- * single global `peq.on`, not per-band — so it's echoed back to Console 1 (to avoid a
- * visual snap-back on the OSD, same reasoning as the optimistic updates elsewhere in
- * this file) but never written to Mixing Station. `eq{N}Type` is a discrete index, not
- * a continuous 0..1 value, so it's passed through as a raw integer rather than clamped.
+ * single global `peq.on`, not per-band — so it's only cached locally, never written
+ * anywhere. `eq{N}Type` is a discrete index, not a continuous 0..1 value, so it's
+ * passed through as a raw integer rather than clamped.
+ *
+ * One-way (Console 1 -> Mixing Station) only — see `handleMidiFilterUpdate`'s JSDoc for
+ * why none of these fields are echoed back via `queueConsole1TrackUpdate`.
  *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
@@ -3275,16 +3359,13 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
 
     const on = readC1DspValue(parsed[`eq${n}On`]);
     if (on !== undefined) {
-      const nextOn = !!on;
-      track[`eq${n}On`] = nextOn;
-      queueConsole1TrackUpdate(track.trackId, { [`eq${n}On`]: { value: nextOn } });
+      track[`eq${n}On`] = !!on;
     }
 
     const freq = readC1DspValue(parsed[`eq${n}Freq`]);
     if (freq !== undefined) {
       const next = clamp01(Number(freq));
       track[`eq${n}Freq`] = next;
-      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Freq`]: { value: next } });
       for (const ch of slot.msChannels) {
         writes.push({
           msPath: `ch.${ch}.peq.bands.${bandIndex}.freq`,
@@ -3298,7 +3379,6 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
     if (gain !== undefined) {
       const next = clamp01(Number(gain));
       track[`eq${n}Gain`] = next;
-      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Gain`]: { value: next } });
       for (const ch of slot.msChannels) {
         writes.push({
           msPath: `ch.${ch}.peq.bands.${bandIndex}.gain`,
@@ -3312,7 +3392,6 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
     if (q !== undefined) {
       const next = clamp01(Number(q));
       track[`eq${n}Q`] = next;
-      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Q`]: { value: next } });
       for (const ch of slot.msChannels) {
         writes.push({
           msPath: `ch.${ch}.peq.bands.${bandIndex}.q`,
@@ -3326,7 +3405,6 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
     if (type !== undefined) {
       const next = Number(type);
       track[`eq${n}Type`] = next;
-      queueConsole1TrackUpdate(track.trackId, { [`eq${n}Type`]: { value: next } });
       for (const ch of slot.msChannels) {
         writes.push({ msPath: `ch.${ch}.peq.bands.${bandIndex}.type`, value: next });
       }
@@ -3343,6 +3421,9 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
  * `filterLcFreq` in the Filter handler has), so their exact wire encoding is inferred
  * from Softube's Cubase driver script, not confirmed against real Console 1 hardware.
  *
+ * One-way (Console 1 -> Mixing Station) only — see `handleMidiFilterUpdate`'s JSDoc for
+ * why none of these fields are echoed back via `queueConsole1TrackUpdate`.
+ *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
  * @param {TrackInfo} track
@@ -3355,7 +3436,6 @@ function handleMidiCompUpdate(parsed, slot, track, writes) {
   if (on !== undefined) {
     const nextOn = !!on;
     track.compOn = nextOn;
-    queueConsole1TrackUpdate(track.trackId, { compOn: { value: nextOn } });
     for (const ch of slot.msChannels) {
       writes.push({ msPath: `ch.${ch}.dyn.on`, value: nextOn ? 1 : 0 });
     }
@@ -3366,7 +3446,6 @@ function handleMidiCompUpdate(parsed, slot, track, writes) {
     if (raw === undefined) continue;
     const next = clamp01(Number(raw));
     track[c1] = next;
-    queueConsole1TrackUpdate(track.trackId, { [c1]: { value: next } });
     for (const ch of slot.msChannels) {
       writes.push({ msPath: `ch.${ch}.dyn.${ms}`, value: next, format: "norm" });
     }
