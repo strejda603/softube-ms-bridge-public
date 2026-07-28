@@ -1085,6 +1085,25 @@ function subscribeToRequiredChannelData() {
     subscribeToChannelData(`ch.*.mix.sends.${msSendIndex}.lvl`, "val");
     subscribeToChannelData(`ch.*.mix.sends.${msSendIndex}.on`, "val");
   }
+
+  subscribeToChannelData("ch.*.preamp.filter.0.on", "val");
+  subscribeToChannelData("ch.*.preamp.filter.0.freq", "norm");
+
+  for (let i = 0; i < EQ_BAND_COUNT; i++) {
+    subscribeToChannelData(`ch.*.peq.bands.${i}.freq`, "norm");
+    subscribeToChannelData(`ch.*.peq.bands.${i}.gain`, "norm");
+    subscribeToChannelData(`ch.*.peq.bands.${i}.q`, "norm");
+    subscribeToChannelData(`ch.*.peq.bands.${i}.type`, "val");
+  }
+
+  subscribeToChannelData("ch.*.dyn.on", "val");
+  subscribeToChannelData("ch.*.dyn.ratio", "norm");
+  subscribeToChannelData("ch.*.dyn.attack", "norm");
+  subscribeToChannelData("ch.*.dyn.release", "norm");
+  subscribeToChannelData("ch.*.dyn.gain", "norm");
+  subscribeToChannelData("ch.*.dyn.thr", "norm");
+  subscribeToChannelData("ch.*.dyn.knee", "norm");
+  subscribeToChannelData("ch.*.dyn.mix", "norm");
 }
 
 /**
