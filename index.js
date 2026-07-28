@@ -67,6 +67,14 @@ const COMP_CONTINUOUS_FIELD_MAP = [
   { c1: "compWetdry", ms: "mix" },
 ];
 
+/**
+ * Mixing Station `dyn.*` field -> Console 1 Compressor field. Derived from
+ * `COMP_CONTINUOUS_FIELD_MAP` (single source of truth) plus the separately-handled `on`.
+ * @type {Record<string, string>}
+ */
+const DYN_TO_C1 = Object.fromEntries(COMP_CONTINUOUS_FIELD_MAP.map((m) => [m.ms, m.c1]));
+DYN_TO_C1.on = "compOn";
+
 let LOG_JSON = false; // Set to true to log all JSON messages to/from Mixing Station
 let LOG_METERING = false; // Set to true to log metering subscription + incoming metering frames
 
@@ -1972,6 +1980,12 @@ function applyMsParamToTrack(track, paramPath, value) {
     case "selected":
       setIfChanged("selected", !!value);
       break;
+    case "preamp.filter.0.on":
+      setIfChanged("filterLcOn", !!value);
+      break;
+    case "preamp.filter.0.freq":
+      setIfChanged("filterLcFreq", value);
+      break;
     default: {
       const sendMatch = paramPath.match(/^mix\.sends\.(\d+)\.(lvl|on)$/);
       if (sendMatch) {
@@ -1989,7 +2003,28 @@ function applyMsParamToTrack(track, paramPath, value) {
           }
         }
         if (kind === "on") setIfChanged(`send${sendNumber}On`, !!value);
+        break;
       }
+
+      const eqMatch = paramPath.match(/^peq\.bands\.(\d+)\.(freq|gain|q|type)$/);
+      if (eqMatch) {
+        const bandNumber = parseInt(eqMatch[1], 10) + 1;
+        const field = eqMatch[2];
+        if (bandNumber < 1 || bandNumber > EQ_BAND_COUNT) break;
+        const key = `eq${bandNumber}${field === "q" ? "Q" : field[0].toUpperCase() + field.slice(1)}`;
+        setIfChanged(key, value);
+        break;
+      }
+
+      const dynMatch = paramPath.match(/^dyn\.(on|ratio|attack|release|gain|thr|knee|mix)$/);
+      if (dynMatch) {
+        const field = dynMatch[1];
+        const key = DYN_TO_C1[field];
+        if (field === "on") setIfChanged(key, !!value);
+        else setIfChanged(key, value);
+        break;
+      }
+
       break;
     }
   }
