@@ -59,7 +59,7 @@ const EQ_BAND_COUNT = 4; // Console 1 has 4 parametric EQ bands
 // software error, the hardware just never shows the tracks. Chosen conservatively so a
 // full-track chunk's byte size stays comfortably under the largest size previously
 // confirmed to work (~24.5KB for a ~60-70 track dump using the pre-DSP field set).
-const CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE = 30;
+const CONSOLE1_FULL_TRACK_BATCH_CHUNK_SIZE = 100;
 
 /**
  * Console 1 Compressor field -> Mixing Station `dyn.*` field, for the 1:1 fields.
