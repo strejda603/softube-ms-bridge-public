@@ -117,6 +117,6 @@ open -a "Mixing Station" --args "-appSeries=X32/M32" -ip=192.168.1.1 -mixTarget=
 #Step 3.5: Check if "Softube On-Screen Display" app is running, if not, start it
 pgrep -f "Softube On-Screen Display" > /dev/null || open -a "Softube On-Screen Display"
 # Step 4: Start Softube Console 1 MS Bridge
-open -a "Softube Console 1 MS Bridge"
+open -a "Softube Console 1 MS Bridge" --args --preset "STO"
 # Step 5: Open Ableton Project
 open -a "Ableton Live 12 Suite" "/Users/danielpitra/Documents/Ableton Projects/STO/STO Project/STO.als"
