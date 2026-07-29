@@ -103,6 +103,8 @@ DYN_TO_C1.on = "compOn";
 const CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS = new Set([
   "filterLcOn",
   "filterLcFreq",
+  "filterPreGain",
+  "filterPhaseInvert",
   ...Array.from({ length: EQ_BAND_COUNT }, (_, i) => i + 1).flatMap((n) => [
     `eq${n}On`,
     `eq${n}Freq`,
@@ -794,6 +796,9 @@ function refreshDspFieldsForRealChannels() {
     requestMixingStationValue(`ch.${ch}.preamp.filter.0.on`, "val");
     requestMixingStationValue(`ch.${ch}.preamp.filter.0.freq`, "norm");
     requestMixingStationValue(`ch.${ch}.preamp.filter.0.freq`, "val");
+    requestMixingStationValue(`ch.${ch}.preamp.trim`, "norm");
+    requestMixingStationValue(`ch.${ch}.preamp.trim`, "val");
+    requestMixingStationValue(`ch.${ch}.preamp.inv`, "val");
 
     for (let i = 0; i < EQ_BAND_COUNT; i++) {
       requestMixingStationValue(`ch.${ch}.peq.bands.${i}.freq`, "norm");
@@ -1181,6 +1186,9 @@ function subscribeToRequiredChannelData() {
   // the "norm" (0..1) value above is what actually drives Console 1's own knob/on-off
   // state. See CONSOLE1_DSP_REAL_VALUE_CACHE's JSDoc for why these must stay separate.
   subscribeToChannelData("ch.*.preamp.filter.0.freq", "val");
+  subscribeToChannelData("ch.*.preamp.trim", "norm");
+  subscribeToChannelData("ch.*.preamp.trim", "val");
+  subscribeToChannelData("ch.*.preamp.inv", "val");
 
   for (let i = 0; i < EQ_BAND_COUNT; i++) {
     subscribeToChannelData(`ch.*.peq.bands.${i}.freq`, "norm");
@@ -1860,6 +1868,8 @@ function createDefaultTrackForSlot(objectId) {
     send6: 0,
     filterLcOn: false,
     filterLcFreq: 0,
+    filterPreGain: 0.5,
+    filterPhaseInvert: false,
     eq1On: false,
     eq1Freq: 0.5,
     eq1Gain: 0.5,
@@ -2134,6 +2144,13 @@ function applyMsParamToTrack(track, paramPath, value, format) {
     case "preamp.filter.0.freq":
       if (format === "val") setRealValueOnly("filterLcFreq", value);
       else setCacheOnly("filterLcFreq", value);
+      break;
+    case "preamp.trim":
+      if (format === "val") setRealValueOnly("filterPreGain", value);
+      else setCacheOnly("filterPreGain", value);
+      break;
+    case "preamp.inv":
+      setCacheOnly("filterPhaseInvert", !!value);
       break;
     default: {
       const sendMatch = paramPath.match(/^mix\.sends\.(\d+)\.(lvl|on)$/);
@@ -2527,6 +2544,8 @@ const CONSOLE1_DSP_FIELD_METADATA = (() => {
   const meta = {
     filterLcOn: { name: "Low Cut On", quantisation: 2, kind: "bool", defaultValue: 0 },
     filterLcFreq: { name: "Low Cut Freq", quantisation: 0, kind: "hz", defaultValue: 0 },
+    filterPreGain: { name: "Pre Gain", quantisation: 0, kind: "db", defaultValue: 0.5 },
+    filterPhaseInvert: { name: "Phase Invert", quantisation: 2, kind: "bool", defaultValue: 0 },
     compOn: { name: "Comp On", quantisation: 2, kind: "bool", defaultValue: 0 },
     compRatio: { name: "Comp Ratio", quantisation: 0, kind: "ratio", defaultValue: 0 },
     compAttack: { name: "Comp Attack", quantisation: 0, kind: "ms", defaultValue: 0 },
@@ -2616,15 +2635,21 @@ function queueConsole1BareFieldUpdate(track, field, value) {
       const trackId = track.trackId;
       const meta = CONSOLE1_DSP_FIELD_METADATA[field];
       const realVal = track[`${field}RealVal`];
+      // Boolean fields: send `value` as a number (0/1), not a JSON boolean literal.
+      // Confirmed via real-hardware testing that "bool"-kind fields (filterLcOn,
+      // filterPhaseInvert, eqNOn, compOn) never render a control in the OSD app with a
+      // `true`/`false` value, even though the message itself is accepted without error
+      // — every other kind (which sends a number) renders fine.
+      const outboundValue = meta && meta.kind === "bool" ? (value ? 1 : 0) : value;
       const payload = meta
         ? {
             name: meta.name,
             quantisation: meta.quantisation,
-            value,
+            value: outboundValue,
             display_value: formatConsole1DspDisplayValue(meta.kind, value, realVal),
             default_value: meta.defaultValue,
           }
-        : { value };
+        : { value: outboundValue };
       sendSysexToConsole1({ trackId, [field]: payload });
     }
   }, CONSOLE1_BARE_FLUSH_MS);
@@ -3553,12 +3578,14 @@ function handleMidiSendSlotsUpdate(parsed, slot, track, writes) {
 }
 
 /**
- * Handle Filter (low-cut) updates from Console 1.
+ * Handle Filter (low-cut, pre-gain, phase-invert) updates from Console 1.
  *
- * Console 1's Filter section also has a high-cut stage (`filterHcOn`/`filterHcFreq`),
- * plus phase-invert/pre-gain/slope fields — none of those have a Mixing Station
- * destination (`preamp.filter.0` is a single filter stage, not a pair), so only
- * low-cut is mapped. See the design doc for the full rationale.
+ * Console 1's Filter section also has a high-cut stage (`filterHcOn`/`filterHcFreq`)
+ * and a slope field — none of those have a Mixing Station destination
+ * (`preamp.filter.0` is a single filter stage, not a pair; `preamp` has no slope
+ * concept), so only low-cut is mapped. Pre-gain (`filterPreGain` -> `preamp.trim`) and
+ * phase invert (`filterPhaseInvert` -> `preamp.inv`) DO have a clean 1:1 Mixing Station
+ * destination and are mapped. See the design doc for the full rationale.
  *
  * Echoed back to Console 1 via `queueConsole1BareFieldUpdate` (bare single-property
  * SysEx, NOT `trackBatch` — see that function's JSDoc and the design doc's regression
@@ -3593,6 +3620,26 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
         value: nextFreq,
         format: "norm",
       });
+    }
+  }
+
+  const preGain = readC1DspValue(parsed.filterPreGain);
+  if (preGain !== undefined) {
+    const next = clamp01(Number(preGain));
+    track.filterPreGain = next;
+    queueConsole1BareFieldUpdate(track, "filterPreGain", next);
+    for (const ch of slot.msChannels) {
+      writes.push({ msPath: `ch.${ch}.preamp.trim`, value: next, format: "norm" });
+    }
+  }
+
+  const phaseInvert = readC1DspValue(parsed.filterPhaseInvert);
+  if (phaseInvert !== undefined) {
+    const nextInv = !!phaseInvert;
+    track.filterPhaseInvert = nextInv;
+    queueConsole1BareFieldUpdate(track, "filterPhaseInvert", nextInv);
+    for (const ch of slot.msChannels) {
+      writes.push({ msPath: `ch.${ch}.preamp.inv`, value: nextInv ? 1 : 0 });
     }
   }
 }
