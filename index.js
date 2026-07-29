@@ -85,16 +85,19 @@ const DYN_TO_C1 = Object.fromEntries(COMP_CONTINUOUS_FIELD_MAP.map((m) => [m.ms,
 DYN_TO_C1.on = "compOn";
 
 /**
- * Filter/EQ/Compressor field names that must NEVER appear in outbound SysEx to Console 1.
+ * Filter/EQ/Compressor field names that must NEVER appear inside a `trackBatch` entry
+ * sent to Console 1.
  *
- * This Fader Mk III unit's firmware rejects the ENTIRE `trackBatch` message if it
- * contains any field name outside its fixed mixer schema (confirmed via real-hardware
- * A/B testing — bare values, `{value}`-wrapped values, and even a nonsense field name
- * all broke track display identically). These fields are still tracked internally (on
- * cached `TrackInfo` objects, populated from both Console 1 SysEx and Mixing Station
- * updates) for bookkeeping/future use — they're stripped centrally in
- * `sendSysexToConsole1` rather than by never setting them, so this protection can't be
- * silently bypassed by a future caller that serializes a track object directly.
+ * This Fader Mk III unit's firmware rejects the ENTIRE `trackBatch` message if any
+ * entry contains a field name outside its fixed mixer schema (confirmed via
+ * real-hardware A/B testing). Crucially, this is scoped to `trackBatch` specifically —
+ * bare single-property update messages (`{trackId, fieldName: {value}}`, not wrapped in
+ * `trackBatch`, matching exactly what Softube's own Cubase driver sends) go through a
+ * separate, more lenient path on the same firmware that DOES accept these fields
+ * (confirmed via real-hardware testing across all 3 DSP sections). See
+ * `queueConsole1BareFieldUpdate` for the outbound path that's actually used for these
+ * fields; this set only guards the `trackBatch` path in `sendSysexToConsole1` so a
+ * future full-dump/batch caller can't accidentally reintroduce the original regression.
  * @type {Set<string>}
  */
 const CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS = new Set([
@@ -770,6 +773,56 @@ function refreshInputsForStandardMode() {
 }
 
 /**
+ * Explicitly request current Filter/EQ/Compressor values for every real channel.
+ *
+ * Unlike `mix.lvl`/`mix.pan`/etc., subscribing to these paths does NOT retro-push
+ * Mixing Station's current retained value — confirmed empirically (subscribed on
+ * connect per Task 7, but zero pushes arrived for a channel with real values known to
+ * be set). Without this, Console 1's OSD app never receives an initial value for these
+ * fields and shows nothing to edit, even though the fields are otherwise wired
+ * end-to-end. Called once per connect, after `subscribeToRequiredChannelData()`.
+ */
+function refreshDspFieldsForRealChannels() {
+  const channels = [];
+  for (let ch = 0; ch < INPUT_CHANNEL_COUNT; ch++) channels.push(ch);
+  for (let ch = BUS_CHANNEL_START; ch < BUS_CHANNEL_START + BUS_CHANNEL_COUNT; ch++) {
+    channels.push(ch);
+  }
+  for (const ch of MAIN_STEREO_CHANNELS) channels.push(ch);
+
+  for (const ch of channels) {
+    requestMixingStationValue(`ch.${ch}.preamp.filter.0.on`, "val");
+    requestMixingStationValue(`ch.${ch}.preamp.filter.0.freq`, "norm");
+    requestMixingStationValue(`ch.${ch}.preamp.filter.0.freq`, "val");
+
+    for (let i = 0; i < EQ_BAND_COUNT; i++) {
+      requestMixingStationValue(`ch.${ch}.peq.bands.${i}.freq`, "norm");
+      requestMixingStationValue(`ch.${ch}.peq.bands.${i}.freq`, "val");
+      requestMixingStationValue(`ch.${ch}.peq.bands.${i}.gain`, "norm");
+      requestMixingStationValue(`ch.${ch}.peq.bands.${i}.gain`, "val");
+      requestMixingStationValue(`ch.${ch}.peq.bands.${i}.q`, "norm");
+      requestMixingStationValue(`ch.${ch}.peq.bands.${i}.q`, "val");
+      requestMixingStationValue(`ch.${ch}.peq.bands.${i}.type`, "val");
+    }
+
+    requestMixingStationValue(`ch.${ch}.dyn.on`, "val");
+    requestMixingStationValue(`ch.${ch}.dyn.ratio`, "norm");
+    requestMixingStationValue(`ch.${ch}.dyn.ratio`, "val");
+    requestMixingStationValue(`ch.${ch}.dyn.attack`, "norm");
+    requestMixingStationValue(`ch.${ch}.dyn.attack`, "val");
+    requestMixingStationValue(`ch.${ch}.dyn.release`, "norm");
+    requestMixingStationValue(`ch.${ch}.dyn.release`, "val");
+    requestMixingStationValue(`ch.${ch}.dyn.gain`, "norm");
+    requestMixingStationValue(`ch.${ch}.dyn.gain`, "val");
+    requestMixingStationValue(`ch.${ch}.dyn.thr`, "norm");
+    requestMixingStationValue(`ch.${ch}.dyn.thr`, "val");
+    requestMixingStationValue(`ch.${ch}.dyn.knee`, "norm");
+    requestMixingStationValue(`ch.${ch}.dyn.knee`, "val");
+    requestMixingStationValue(`ch.${ch}.dyn.mix`, "norm");
+  }
+}
+
+/**
  * Apply standard mute and pan settings to input channels from the cache.
  */
 function applyStandardMutePanToInputsFromCache() {
@@ -1124,21 +1177,36 @@ function subscribeToRequiredChannelData() {
 
   subscribeToChannelData("ch.*.preamp.filter.0.on", "val");
   subscribeToChannelData("ch.*.preamp.filter.0.freq", "norm");
+  // Also subscribed in "val" (real Hz) purely for Console 1 OSD display_value text —
+  // the "norm" (0..1) value above is what actually drives Console 1's own knob/on-off
+  // state. See CONSOLE1_DSP_REAL_VALUE_CACHE's JSDoc for why these must stay separate.
+  subscribeToChannelData("ch.*.preamp.filter.0.freq", "val");
 
   for (let i = 0; i < EQ_BAND_COUNT; i++) {
     subscribeToChannelData(`ch.*.peq.bands.${i}.freq`, "norm");
+    subscribeToChannelData(`ch.*.peq.bands.${i}.freq`, "val");
     subscribeToChannelData(`ch.*.peq.bands.${i}.gain`, "norm");
+    subscribeToChannelData(`ch.*.peq.bands.${i}.gain`, "val");
     subscribeToChannelData(`ch.*.peq.bands.${i}.q`, "norm");
+    subscribeToChannelData(`ch.*.peq.bands.${i}.q`, "val");
     subscribeToChannelData(`ch.*.peq.bands.${i}.type`, "val");
   }
 
   subscribeToChannelData("ch.*.dyn.on", "val");
   subscribeToChannelData("ch.*.dyn.ratio", "norm");
+  subscribeToChannelData("ch.*.dyn.ratio", "val");
   subscribeToChannelData("ch.*.dyn.attack", "norm");
+  subscribeToChannelData("ch.*.dyn.attack", "val");
   subscribeToChannelData("ch.*.dyn.release", "norm");
+  subscribeToChannelData("ch.*.dyn.release", "val");
   subscribeToChannelData("ch.*.dyn.gain", "norm");
+  subscribeToChannelData("ch.*.dyn.gain", "val");
   subscribeToChannelData("ch.*.dyn.thr", "norm");
+  subscribeToChannelData("ch.*.dyn.thr", "val");
   subscribeToChannelData("ch.*.dyn.knee", "norm");
+  subscribeToChannelData("ch.*.dyn.knee", "val");
+  // Mix (wet/dry) deliberately stays percentage-only per real-world confirmation — no
+  // "val" subscription needed.
   subscribeToChannelData("ch.*.dyn.mix", "norm");
 }
 
@@ -1652,6 +1720,7 @@ function connectMixingStationWebSocket() {
     initFlushTimeoutId = setTimeout(() => finalizeInitialization("timeout"), INIT_FLUSH_TIMEOUT_MS);
 
     subscribeToRequiredChannelData();
+    refreshDspFieldsForRealChannels();
     disableOSD();
     startHandshake();
     console.log("Console 1 handshake sent.");
@@ -1981,9 +2050,15 @@ const recentMsWrites = new Map();
  * @param {TrackInfo} track - Cached track object to update
  * @param {string} paramPath - Parameter path relative to `ch.<n>.` (e.g. `mix.lvl`)
  * @param {any} value
+ * @param {"val"|"norm"} [format] - Only meaningful for the Filter/EQ/Compressor
+ *   continuous fields, which are dual-subscribed in both formats (see
+ *   `subscribeToRequiredChannelData`): "norm" (0..1) drives Console 1's own knob
+ *   position and is what everything else in this file already expects; "val" (real
+ *   Hz/dB/ms/ratio units) is captured ONLY for `queueConsole1BareFieldUpdate`'s
+ *   `display_value` text and must never leak into the 0..1 fields Console 1 syncs on.
  * @returns {Record<string, any>} Changed fields, suitable for `queueConsole1TrackUpdate()`
  */
-function applyMsParamToTrack(track, paramPath, value) {
+function applyMsParamToTrack(track, paramPath, value, format) {
   /** @type {Record<string, any>} */
   const changed = {};
 
@@ -1994,13 +2069,22 @@ function applyMsParamToTrack(track, paramPath, value) {
     }
   };
 
-  // Filter/EQ/Compressor fields: cache-only, deliberately never added to `changed`.
-  // This Fader Mk III unit's firmware rejects the ENTIRE outbound `trackBatch` SysEx
-  // message if it contains any field name outside its fixed mixer schema (confirmed via
-  // real-hardware A/B testing), so these fields must never reach `queueConsole1TrackUpdate`
-  // — only `changed`-based fields (mute/pan/sends/etc.) get echoed back to hardware.
+  // Filter/EQ/Compressor fields: deliberately never added to `changed` (never sent via
+  // `queueConsole1TrackUpdate`/`trackBatch` — this Fader Mk III unit's firmware rejects
+  // the ENTIRE outbound `trackBatch` message if it contains any field name outside its
+  // fixed mixer schema, confirmed via real-hardware A/B testing). Still echoed back to
+  // Console 1, just via the separate bare-message path proven to work for these fields
+  // — see `queueConsole1BareFieldUpdate`'s JSDoc.
   const setCacheOnly = (field, next) => {
     track[field] = next;
+    queueConsole1BareFieldUpdate(track, field, next);
+  };
+
+  // Real-unit ("val" format) companion value for a continuous DSP field — display-only,
+  // see this function's `format` param JSDoc. Stored as `<field>RealVal` on the same
+  // track object; read back by `queueConsole1BareFieldUpdate`'s display_value builder.
+  const setRealValueOnly = (field, next) => {
+    track[`${field}RealVal`] = next;
   };
 
   switch (paramPath) {
@@ -2048,7 +2132,8 @@ function applyMsParamToTrack(track, paramPath, value) {
       setCacheOnly("filterLcOn", !!value);
       break;
     case "preamp.filter.0.freq":
-      setCacheOnly("filterLcFreq", value);
+      if (format === "val") setRealValueOnly("filterLcFreq", value);
+      else setCacheOnly("filterLcFreq", value);
       break;
     default: {
       const sendMatch = paramPath.match(/^mix\.sends\.(\d+)\.(lvl|on)$/);
@@ -2076,7 +2161,10 @@ function applyMsParamToTrack(track, paramPath, value) {
         const field = eqMatch[2];
         if (bandNumber < 1 || bandNumber > EQ_BAND_COUNT) break;
         const key = `eq${bandNumber}${field === "q" ? "Q" : field[0].toUpperCase() + field.slice(1)}`;
-        setCacheOnly(key, value);
+        // `type` isn't dual-subscribed (only ever arrives as "val", and that raw index
+        // IS both the sync value and the display value) — always goes to setCacheOnly.
+        if (field !== "type" && format === "val") setRealValueOnly(key, value);
+        else setCacheOnly(key, value);
         break;
       }
 
@@ -2084,8 +2172,14 @@ function applyMsParamToTrack(track, paramPath, value) {
       if (dynMatch) {
         const field = dynMatch[1];
         const key = DYN_TO_C1[field];
-        if (field === "on") setCacheOnly(key, !!value);
-        else setCacheOnly(key, value);
+        if (field === "on") {
+          setCacheOnly(key, !!value);
+        } else if (field !== "mix" && format === "val") {
+          // `mix` (wet/dry) isn't dual-subscribed — stays percentage-only, always synced.
+          setRealValueOnly(key, value);
+        } else {
+          setCacheOnly(key, value);
+        }
         break;
       }
 
@@ -2254,7 +2348,7 @@ function finalizeInitialization(reason) {
         if (m.paramPath === "mix.pan" && slot.panLocked) {
           valueForApply = 0.5;
         }
-        applyMsParamToTrack(tracksByObjectId[objectId], m.paramPath, valueForApply);
+        applyMsParamToTrack(tracksByObjectId[objectId], m.paramPath, valueForApply, m.format);
       }
     }
   }
@@ -2313,12 +2407,26 @@ function sendSysexToConsole1(jsonObj, forceSend = false) {
   data.push(SYSEX_MANUFACTURER);
   data = data.concat(SYSEX_MAGIC);
 
-  function sysexJsonReplacer(key, value) {
-    // Never let Filter/EQ/Compressor fields reach Console 1 outbound — see
-    // CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS' JSDoc for why. Returning `undefined` from a
-    // JSON.stringify replacer omits the key entirely.
-    if (CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS.has(key)) return undefined;
+  // Filter/EQ/Compressor fields must never appear inside a `trackBatch` entry (see
+  // CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS' JSDoc) — deliberately scoped to `trackBatch`
+  // only, since bare single-property messages (queueConsole1BareFieldUpdate) are a
+  // separate, confirmed-working path for these same fields and must NOT be filtered.
+  if (jsonObj && Array.isArray(jsonObj.trackBatch)) {
+    jsonObj = {
+      ...jsonObj,
+      trackBatch: jsonObj.trackBatch.map((track) => {
+        if (!track || typeof track !== "object") return track;
+        const filtered = {};
+        for (const key of Object.keys(track)) {
+          if (CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS.has(key)) continue;
+          filtered[key] = track[key];
+        }
+        return filtered;
+      }),
+    };
+  }
 
+  function sysexJsonReplacer(key, value) {
     // -Infinity is not supported by JSON, but OSD expects "-Infinity" as a string
     if (typeof value === "number" && value === -Infinity) {
       return "-Infinity";
@@ -2365,6 +2473,161 @@ function sendSysexToConsole1(jsonObj, forceSend = false) {
     // e.g. during a SIGINT shutdown that arrives before the Console 1 Fader was ever found.
     if (midiOutput) midiOutput.sendMessage(data);
   }
+}
+
+// --- Filter/EQ/Compressor bare field updates ---
+// Debounced per (trackId, field), 20ms flush window — same shape as
+// queueConsole1TrackUpdate's flush, but each entry is sent as its OWN bare SysEx message
+// (`{trackId, field: {value}}`, not wrapped in `trackBatch`) since that's the only
+// outbound shape this hardware accepts for these fields (see
+// CONSOLE1_OUTBOUND_UNSUPPORTED_FIELDS' JSDoc for the real-hardware evidence).
+const CONSOLE1_BARE_FLUSH_MS = 20;
+let console1BareFlushTimer = null;
+/** @type {Map<string, {track: TrackInfo, field: string, value: any}>} */
+const console1BareUpdateQueue = new Map();
+
+/**
+ * Human-readable names for Mixing Station's `peq.bands.N.type` enum, in MS's own
+ * index order (confirmed against a real channel with EQ enabled) — NOT Console 1's own
+ * type enum, which may not match 1:1 (see the design doc's EQ-type caveat). Used only
+ * for `display_value` text; the raw index is still what's synced to Console 1.
+ * @type {string[]}
+ */
+const MS_EQ_TYPE_NAMES = ["Hi-Cut", "Hi-Shelf", "VEQ", "PEQ", "Lo-Shelf", "Lo-Cut"];
+
+/**
+ * Per-field metadata for the OSD app's bare property-update rendering.
+ *
+ * Confirmed via real-hardware testing: a bare `{trackId, field: {value}}` message is
+ * accepted by Console 1's firmware without crashing anything, but the OSD app will NOT
+ * draw a control for a field it's never seen before from just `value` alone — it needs
+ * `name`/`quantisation`/`display_value`/`default_value` present too, matching the shape
+ * Softube's own Cubase driver sends (`handleTrackPropertyChange` in
+ * `docs/softube_common.js`). Once a control exists, subsequent bare `{value}`-only
+ * updates keep it in sync fine.
+ *
+ * `name` values are taken from the real Console 1 AU plugin's own parameter names
+ * (dumped via `auval -v aufx ScPi SfTb`) where a clean 1:1 match exists. `quantisation`
+ * follows the convention already used by Softube's own Cubase driver: 2 for on/off
+ * toggles, 8 for the outer EQ bands' Type parameter (more filter-shape options), 2 for
+ * the inner bands' Type, 0 for genuinely continuous parameters.
+ *
+ * `kind` drives `display_value` formatting. Real-unit kinds ("hz"/"db"/"ms"/"ratio"/
+ * "raw") read the companion `<field>RealVal` Mixing Station pushes in `"val"` format
+ * (see `applyMsParamToTrack`'s `format` handling) — confirmed these arrive already in
+ * the right real-world unit, no conversion math needed on our side. Falls back to a
+ * plain percentage of the 0..1 sync value if the real-unit push hasn't arrived yet, so
+ * display_value is never blank/undefined.
+ *
+ * @typedef {"bool"|"percent"|"index"|"hz"|"db"|"ms"|"ratio"|"raw"|"eqtype"} Console1DspFieldKind
+ * @type {Record<string, {name: string, quantisation: number, kind: Console1DspFieldKind, defaultValue: number}>}
+ */
+const CONSOLE1_DSP_FIELD_METADATA = (() => {
+  /** @type {Record<string, {name: string, quantisation: number, kind: Console1DspFieldKind, defaultValue: number}>} */
+  const meta = {
+    filterLcOn: { name: "Low Cut On", quantisation: 2, kind: "bool", defaultValue: 0 },
+    filterLcFreq: { name: "Low Cut Freq", quantisation: 0, kind: "hz", defaultValue: 0 },
+    compOn: { name: "Comp On", quantisation: 2, kind: "bool", defaultValue: 0 },
+    compRatio: { name: "Comp Ratio", quantisation: 0, kind: "ratio", defaultValue: 0 },
+    compAttack: { name: "Comp Attack", quantisation: 0, kind: "ms", defaultValue: 0 },
+    compRelease: { name: "Comp Release", quantisation: 0, kind: "ms", defaultValue: 0 },
+    compMakeup: { name: "Comp Makeup", quantisation: 0, kind: "db", defaultValue: 0 },
+    compComp: { name: "Comp Threshold", quantisation: 0, kind: "db", defaultValue: 0 },
+    compKnee: { name: "Comp Knee", quantisation: 0, kind: "raw", defaultValue: 0 },
+    compWetdry: { name: "Comp Wet/Dry", quantisation: 0, kind: "percent", defaultValue: 0 },
+  };
+  for (let n = 1; n <= EQ_BAND_COUNT; n++) {
+    meta[`eq${n}On`] = { name: `EQ ${n} On`, quantisation: 2, kind: "bool", defaultValue: 0 };
+    meta[`eq${n}Freq`] = { name: `EQ ${n} Freq`, quantisation: 0, kind: "hz", defaultValue: 0.5 };
+    meta[`eq${n}Gain`] = { name: `EQ ${n} Gain`, quantisation: 0, kind: "db", defaultValue: 0.5 };
+    meta[`eq${n}Q`] = { name: `EQ ${n} Q`, quantisation: 0, kind: "raw", defaultValue: 0.5 };
+    meta[`eq${n}Type`] = {
+      name: `EQ ${n} Type`,
+      quantisation: n === 1 || n === EQ_BAND_COUNT ? 8 : 2,
+      kind: "eqtype",
+      defaultValue: 0,
+    };
+  }
+  return meta;
+})();
+
+/**
+ * Build the display string for a bare field update, per its metadata `kind`.
+ *
+ * @param {Console1DspFieldKind} kind
+ * @param {any} value - The 0..1 sync value (or raw index for "index"/"eqtype").
+ * @param {any} realVal - The companion `"val"`-format (real-unit) value, if known yet.
+ * @returns {string}
+ */
+function formatConsole1DspDisplayValue(kind, value, realVal) {
+  if (kind === "bool") return value ? "On" : "Off";
+  if (kind === "index") return String(Math.round(Number(value)));
+  if (kind === "eqtype") {
+    const idx = Math.round(Number(value));
+    return MS_EQ_TYPE_NAMES[idx] ?? String(idx);
+  }
+  if (realVal === undefined) return `${Math.round(Number(value) * 100)}%`;
+  const n = Number(realVal);
+  switch (kind) {
+    case "hz":
+      return `${n.toFixed(1)} Hz`;
+    case "db":
+      return `${n.toFixed(1)} dB`;
+    case "ms":
+      return `${n.toFixed(1)} ms`;
+    case "ratio":
+      return `${n.toFixed(1)}:1`;
+    case "raw":
+      return n.toFixed(2);
+    default:
+      return `${Math.round(Number(value) * 100)}%`;
+  }
+}
+
+/**
+ * Queue a Filter/EQ/Compressor field update to echo to Console 1 as a bare (non-
+ * `trackBatch`) SysEx message. Batched updates for the same (trackId, field) pair
+ * within the flush window collapse to the latest value, same as
+ * `queueConsole1TrackUpdate`. Dropped entirely if OSD isn't enabled (Console 1 hasn't
+ * acked a handshake yet) — these fields have no display-in-standby use case, unlike the
+ * status/Start bank's forced sends.
+ *
+ * @example
+ * queueConsole1BareFieldUpdate(track, "filterLcFreq", 0.42);
+ *
+ * @param {TrackInfo} track
+ * @param {string} field
+ * @param {any} value
+ */
+function queueConsole1BareFieldUpdate(track, field, value) {
+  const key = `${track.trackId}|${field}`;
+  console1BareUpdateQueue.set(key, { track, field, value });
+
+  if (console1BareFlushTimer) return;
+  console1BareFlushTimer = setTimeout(() => {
+    console1BareFlushTimer = null;
+    if (console1BareUpdateQueue.size === 0) return;
+
+    const entries = Array.from(console1BareUpdateQueue.values());
+    console1BareUpdateQueue.clear();
+
+    if (!osdEnabled) return;
+    for (const { track, field, value } of entries) {
+      const trackId = track.trackId;
+      const meta = CONSOLE1_DSP_FIELD_METADATA[field];
+      const realVal = track[`${field}RealVal`];
+      const payload = meta
+        ? {
+            name: meta.name,
+            quantisation: meta.quantisation,
+            value,
+            display_value: formatConsole1DspDisplayValue(meta.kind, value, realVal),
+            default_value: meta.defaultValue,
+          }
+        : { value };
+      sendSysexToConsole1({ trackId, [field]: payload });
+    }
+  }, CONSOLE1_BARE_FLUSH_MS);
 }
 
 // --- Handshake and full-batch sends ---
@@ -2566,9 +2829,10 @@ function shouldFinalizeInitializationEarly() {
  * @param {number} channelIndex
  * @param {string} paramPath
  * @param {any} value
+ * @param {"val"|"norm"} [format]
  */
-function bufferInitUpdate(channelIndex, paramPath, value) {
-  initMessageBuffer.push({ channelIndex, paramPath, value });
+function bufferInitUpdate(channelIndex, paramPath, value, format) {
+  initMessageBuffer.push({ channelIndex, paramPath, value, format });
   initSeenMsChannels.add(channelIndex);
   if (shouldFinalizeInitializationEarly()) {
     finalizeInitialization("received all layout channels");
@@ -2749,7 +3013,7 @@ function applyChannelUpdateToSlot(args) {
   if (handled) return;
 
   const track = tracksByObjectId[objectId];
-  const changed = applyMsParamToTrack(track, paramPath, valueForApply);
+  const changed = applyMsParamToTrack(track, paramPath, valueForApply, format);
 
   // While in sends mode, proxy Bus/Main fader display via send slots.
   if (isSendsModeActive() && isBusOrMain(slot) && paramPath === "mix.lvl") {
@@ -2811,7 +3075,7 @@ function handleWSMessage(data) {
       ensureTracksForObjectIds(objectIds);
 
       if (isInitializing) {
-        bufferInitUpdate(channelIndex, paramPath, value);
+        bufferInitUpdate(channelIndex, paramPath, value, format);
         return;
       }
 
@@ -3296,13 +3560,9 @@ function handleMidiSendSlotsUpdate(parsed, slot, track, writes) {
  * destination (`preamp.filter.0` is a single filter stage, not a pair), so only
  * low-cut is mapped. See the design doc for the full rationale.
  *
- * One-way (Console 1 -> Mixing Station) only: this Fader Mk III unit's firmware
- * rejects the ENTIRE `trackBatch` SysEx message if it contains any field name outside
- * its fixed mixer schema — confirmed via real-hardware A/B testing (bare, `{value}`-
- * wrapped, and even a nonsense field name all broke track display identically). So
- * these fields are read from hardware and written to Mixing Station, but NEVER echoed
- * back via `queueConsole1TrackUpdate` — doing so silently breaks the display of every
- * track, not just this one. See the design doc's regression note for the full story.
+ * Echoed back to Console 1 via `queueConsole1BareFieldUpdate` (bare single-property
+ * SysEx, NOT `trackBatch` — see that function's JSDoc and the design doc's regression
+ * note for why the distinction matters on this hardware).
  *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
@@ -3316,6 +3576,7 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
   if (lcOn !== undefined) {
     const nextOn = !!lcOn;
     track.filterLcOn = nextOn;
+    queueConsole1BareFieldUpdate(track, "filterLcOn", nextOn);
     for (const ch of slot.msChannels) {
       writes.push({ msPath: `ch.${ch}.preamp.filter.0.on`, value: nextOn ? 1 : 0 });
     }
@@ -3325,6 +3586,7 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
   if (lcFreq !== undefined) {
     const nextFreq = clamp01(Number(lcFreq));
     track.filterLcFreq = nextFreq;
+    queueConsole1BareFieldUpdate(track, "filterLcFreq", nextFreq);
     for (const ch of slot.msChannels) {
       writes.push({
         msPath: `ch.${ch}.preamp.filter.0.freq`,
@@ -3339,12 +3601,14 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
  * Handle 4-band parametric EQ updates from Console 1 (`eq1..eq4` × `On/Freq/Gain/Q/Type`).
  *
  * `eq{N}On` (per-band on/off) has no Mixing Station destination — MS only exposes a
- * single global `peq.on`, not per-band — so it's only cached locally, never written
- * anywhere. `eq{N}Type` is a discrete index, not a continuous 0..1 value, so it's
- * passed through as a raw integer rather than clamped.
+ * single global `peq.on`, not per-band — so it's echoed back to Console 1 (to avoid a
+ * visual snap-back on the OSD, same reasoning as the optimistic updates elsewhere in
+ * this file) but never written to Mixing Station. `eq{N}Type` is a discrete index, not
+ * a continuous 0..1 value, so it's passed through as a raw integer rather than clamped.
  *
- * One-way (Console 1 -> Mixing Station) only — see `handleMidiFilterUpdate`'s JSDoc for
- * why none of these fields are echoed back via `queueConsole1TrackUpdate`.
+ * Echoed back to Console 1 via `queueConsole1BareFieldUpdate` (bare single-property
+ * SysEx, NOT `trackBatch` — see that function's JSDoc for why the distinction matters
+ * on this hardware).
  *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
@@ -3359,13 +3623,16 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
 
     const on = readC1DspValue(parsed[`eq${n}On`]);
     if (on !== undefined) {
-      track[`eq${n}On`] = !!on;
+      const nextOn = !!on;
+      track[`eq${n}On`] = nextOn;
+      queueConsole1BareFieldUpdate(track, `eq${n}On`, nextOn);
     }
 
     const freq = readC1DspValue(parsed[`eq${n}Freq`]);
     if (freq !== undefined) {
       const next = clamp01(Number(freq));
       track[`eq${n}Freq`] = next;
+      queueConsole1BareFieldUpdate(track, `eq${n}Freq`, next);
       for (const ch of slot.msChannels) {
         writes.push({
           msPath: `ch.${ch}.peq.bands.${bandIndex}.freq`,
@@ -3379,6 +3646,7 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
     if (gain !== undefined) {
       const next = clamp01(Number(gain));
       track[`eq${n}Gain`] = next;
+      queueConsole1BareFieldUpdate(track, `eq${n}Gain`, next);
       for (const ch of slot.msChannels) {
         writes.push({
           msPath: `ch.${ch}.peq.bands.${bandIndex}.gain`,
@@ -3392,6 +3660,7 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
     if (q !== undefined) {
       const next = clamp01(Number(q));
       track[`eq${n}Q`] = next;
+      queueConsole1BareFieldUpdate(track, `eq${n}Q`, next);
       for (const ch of slot.msChannels) {
         writes.push({
           msPath: `ch.${ch}.peq.bands.${bandIndex}.q`,
@@ -3405,6 +3674,7 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
     if (type !== undefined) {
       const next = Number(type);
       track[`eq${n}Type`] = next;
+      queueConsole1BareFieldUpdate(track, `eq${n}Type`, next);
       for (const ch of slot.msChannels) {
         writes.push({ msPath: `ch.${ch}.peq.bands.${bandIndex}.type`, value: next });
       }
@@ -3421,8 +3691,9 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
  * `filterLcFreq` in the Filter handler has), so their exact wire encoding is inferred
  * from Softube's Cubase driver script, not confirmed against real Console 1 hardware.
  *
- * One-way (Console 1 -> Mixing Station) only — see `handleMidiFilterUpdate`'s JSDoc for
- * why none of these fields are echoed back via `queueConsole1TrackUpdate`.
+ * Echoed back to Console 1 via `queueConsole1BareFieldUpdate` (bare single-property
+ * SysEx, NOT `trackBatch` — see that function's JSDoc for why the distinction matters
+ * on this hardware).
  *
  * @param {any} parsed
  * @param {TrackLayoutSlot} slot
@@ -3436,6 +3707,7 @@ function handleMidiCompUpdate(parsed, slot, track, writes) {
   if (on !== undefined) {
     const nextOn = !!on;
     track.compOn = nextOn;
+    queueConsole1BareFieldUpdate(track, "compOn", nextOn);
     for (const ch of slot.msChannels) {
       writes.push({ msPath: `ch.${ch}.dyn.on`, value: nextOn ? 1 : 0 });
     }
@@ -3446,6 +3718,7 @@ function handleMidiCompUpdate(parsed, slot, track, writes) {
     if (raw === undefined) continue;
     const next = clamp01(Number(raw));
     track[c1] = next;
+    queueConsole1BareFieldUpdate(track, c1, next);
     for (const ch of slot.msChannels) {
       writes.push({ msPath: `ch.${ch}.dyn.${ms}`, value: next, format: "norm" });
     }
