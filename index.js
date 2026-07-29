@@ -2505,12 +2505,45 @@ const console1BareUpdateQueue = new Map();
 
 /**
  * Human-readable names for Mixing Station's `peq.bands.N.type` enum, in MS's own
- * index order (confirmed against a real channel with EQ enabled) — NOT Console 1's own
- * type enum, which may not match 1:1 (see the design doc's EQ-type caveat). Used only
- * for `display_value` text; the raw index is still what's synced to Console 1.
+ * index order. Derived from 5 confirmed real-hardware data points across 3 different
+ * real channels/bands (indices 1, 3, 4, 5 directly confirmed via the OSD app showing
+ * this exact string for each raw value; indices 0 and 2 inferred from the resulting
+ * PEQ/VEQ-broad, Hi-Cut/Lo-Cut-cut, Lo-Shelf/Hi-Shelf-shelf pairing pattern, not yet
+ * independently confirmed). This is Mixing Station's OWN naming — the OSD app was
+ * confirmed to display whatever string is sent here verbatim, not doing its own
+ * lookup, so accuracy here directly determines what's shown.
  * @type {string[]}
  */
-const MS_EQ_TYPE_NAMES = ["Hi-Cut", "Hi-Shelf", "VEQ", "PEQ", "Lo-Shelf", "Lo-Cut"];
+const MS_EQ_TYPE_NAMES = ["PEQ", "VEQ", "Hi-Cut", "Lo-Cut", "Lo-Shelf", "Hi-Shelf"];
+
+/**
+ * Cubase's generic-remote `getParameterProcessValue`/-`SetValue` convention (confirmed
+ * via `docs/softube_common.js`'s `parameterChangeCallback`) represents EVERY parameter,
+ * discrete or continuous, as a normalized 0..1 float — `quantisation` only tells the
+ * receiving control how many detents to snap the knob to within that 0..1 range, it does
+ * NOT mean the wire value itself is a raw step index. Console 1's firmware follows the
+ * same convention: sending a raw index (e.g. `3`) as `value` for a quantised field is
+ * out-of-range for a 0..1 control and gets clamped to 1, which is why real-hardware
+ * testing showed the EQ Type knob only ever reaching 2 states (index 0, and everything
+ * >=1 clamped together) instead of cycling through all 6 types.
+ * @param {number} index - 0..(MS_EQ_TYPE_NAMES.length - 1)
+ * @returns {number} 0..1
+ */
+function eqTypeIndexToNormalized(index) {
+  return MS_EQ_TYPE_NAMES.length > 1 ? index / (MS_EQ_TYPE_NAMES.length - 1) : 0;
+}
+
+/**
+ * Inverse of {@link eqTypeIndexToNormalized} — converts a normalized 0..1 value received
+ * from Console 1 (turning the physical EQ Type knob) back into an MS `peq.bands.N.type`
+ * index.
+ * @param {number} normalized - 0..1
+ * @returns {number} 0..(MS_EQ_TYPE_NAMES.length - 1)
+ */
+function eqTypeNormalizedToIndex(normalized) {
+  const idx = Math.round(Number(normalized) * (MS_EQ_TYPE_NAMES.length - 1));
+  return Math.min(MS_EQ_TYPE_NAMES.length - 1, Math.max(0, idx));
+}
 
 /**
  * Per-field metadata for the OSD app's bare property-update rendering.
@@ -2562,7 +2595,12 @@ const CONSOLE1_DSP_FIELD_METADATA = (() => {
     meta[`eq${n}Q`] = { name: `EQ ${n} Q`, quantisation: 0, kind: "raw", defaultValue: 0.5 };
     meta[`eq${n}Type`] = {
       name: `EQ ${n} Type`,
-      quantisation: n === 1 || n === EQ_BAND_COUNT ? 8 : 2,
+      // 6, uniformly — matches Mixing Station's actual type count (all 4 bands allow
+      // all 6 types with no per-band restriction). The asymmetric 8/2/2/8 scheme this
+      // replaced was Console 1's OWN per-band hardware type restriction (borrowed from
+      // the Cubase driver's PARAMTAG quantisation convention), which doesn't apply
+      // here — MS_EQ_TYPE_NAMES' 6 entries are all reachable on every band.
+      quantisation: MS_EQ_TYPE_NAMES.length,
       kind: "eqtype",
       defaultValue: 0,
     };
@@ -2640,7 +2678,14 @@ function queueConsole1BareFieldUpdate(track, field, value) {
       // filterPhaseInvert, eqNOn, compOn) never render a control in the OSD app with a
       // `true`/`false` value, even though the message itself is accepted without error
       // — every other kind (which sends a number) renders fine.
-      const outboundValue = meta && meta.kind === "bool" ? (value ? 1 : 0) : value;
+      const outboundValue =
+        meta && meta.kind === "bool"
+          ? value
+            ? 1
+            : 0
+          : meta && meta.kind === "eqtype"
+            ? eqTypeIndexToNormalized(value)
+            : value;
       const payload = meta
         ? {
             name: meta.name,
@@ -3719,7 +3764,10 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
 
     const type = readC1DspValue(parsed[`eq${n}Type`]);
     if (type !== undefined) {
-      const next = Number(type);
+      // Console 1 sends this as a normalized 0..1 float (Cubase generic-remote
+      // convention for ALL parameters, discrete or continuous — see
+      // `eqTypeNormalizedToIndex`'s JSDoc), not a raw step index.
+      const next = eqTypeNormalizedToIndex(type);
       track[`eq${n}Type`] = next;
       queueConsole1BareFieldUpdate(track, `eq${n}Type`, next);
       for (const ch of slot.msChannels) {

@@ -148,6 +148,22 @@ code {
   gap: 14px;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px;
+}
+
+.sidebar-footer .label {
+  flex: 0 0 auto;
+}
+
+.sidebar-footer .select {
+  flex: 1;
+}
+
 .main {
   display: flex;
   flex-direction: column;

@@ -21,9 +21,10 @@ function t(key, vars) {
  * - `data-i18n-title="key"` / `data-i18n-aria-label="key"` / `data-i18n-placeholder="key"`
  *   set the corresponding attribute
  *
- * Called once at startup, before any code reads default text/attributes off these elements.
- * Only "en" ships today (see app/locales/), so this currently just re-writes English over
- * English — but every string in the static HTML is already wired for a future locale.
+ * Called once at startup (before any code reads default text/attributes off these
+ * elements), and again by `setupLanguageSelector()`'s change handler whenever the user
+ * switches language at runtime — re-running it re-writes every already-rendered
+ * `data-i18n*` element with the newly active locale's strings.
  */
 function applyI18n() {
   for (const el of document.querySelectorAll("[data-i18n]")) {
@@ -41,6 +42,49 @@ function applyI18n() {
   for (const el of document.querySelectorAll("[data-i18n-placeholder]")) {
     el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
   }
+}
+
+/**
+ * Populate and wire the sidebar's language `<select>`. Switching fires
+ * `i18n.setLocale()` (persists the choice + updates preload's own `t()`/`getLocale()`
+ * immediately) then re-runs `applyI18n()` to refresh every already-rendered
+ * `data-i18n*` element with the new strings — no app restart needed.
+ */
+async function setupLanguageSelector() {
+  const select = document.getElementById("languageSelect");
+  if (!select) return;
+
+  const locales = await i18n.listLocales();
+  const current = i18n.getLocale();
+
+  select.innerHTML = "";
+  for (const { code, name } of locales) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = name;
+    if (code === current) option.selected = true;
+    select.appendChild(option);
+  }
+
+  select.addEventListener("change", async () => {
+    await i18n.setLocale(select.value);
+    applyI18n();
+    // Elements filled imperatively (not via data-i18n*) don't get touched by
+    // applyI18n() above, so they each need an explicit re-render here.
+    renderAppVersion();
+    setModeUi(currentMode === "—" ? undefined : currentMode);
+    setStatusUi();
+    renderList("input");
+    renderList("bus");
+    syncRestLists();
+  });
+}
+
+/** Render the app version (from package.json) into the sidebar footer. */
+function renderAppVersion() {
+  const el = document.getElementById("appVersion");
+  if (!el) return;
+  el.textContent = t("sidebar.version", { version: i18n.version });
 }
 
 // When Electron is launched with `--verbose`, main passes `?verbose=1`.
@@ -664,13 +708,13 @@ function renderRestList(kind) {
     left.innerHTML = `<strong>${labelForRest(
       kind,
       n
-    )}</strong><span class="muted">unassigned</span>`;
+    )}</strong><span class="muted">${t("trackLayout.restUnassigned")}</span>`;
 
     const right = document.createElement("div");
     right.className = "btn-group";
     const hint = document.createElement("div");
     hint.className = "muted small";
-    hint.textContent = "Drag";
+    hint.textContent = t("trackLayout.restDragHint");
     right.appendChild(hint);
 
     item.appendChild(left);
@@ -919,7 +963,7 @@ function renderList(kind) {
     btnLink.className = "btn small";
 
     if (row.length === 2) {
-      btnLink.textContent = "Unlink";
+      btnLink.textContent = t("trackLayout.unlink");
       btnLink.addEventListener("click", () => {
         const a = row[0];
         const b = row[1];
@@ -928,7 +972,7 @@ function renderList(kind) {
         updateApplyButton();
       });
     } else {
-      btnLink.textContent = "Link";
+      btnLink.textContent = t("trackLayout.link");
       btnLink.disabled = !canLinkAdjacent(rows, idx);
       btnLink.addEventListener("click", () => {
         if (!canLinkAdjacent(rows, idx)) return;
@@ -1543,6 +1587,9 @@ function applyStatusIndicators(status) {
 
 async function init() {
   applyI18n();
+  renderAppVersion();
+  setModeUi(undefined);
+  await setupLanguageSelector();
 
   setFormFromConfig(
     makeDefaultConfig({ inputCount: state.inputTotalCount, busCount: state.busTotalCount })

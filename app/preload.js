@@ -5,7 +5,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 // aborts the whole preload script (nothing gets exposed at all, not just i18n). So the locale
 // is loaded in the main process (see app/main.js's `i18n:get` handler, which has full Node
 // access and the real `app.getLocale()`) and fetched here over synchronous IPC instead.
-const { locale: activeLocale, strings: i18nStrings } = ipcRenderer.sendSync("i18n:get");
+// `let`, not `const`: reassigned by the exposed `i18n.setLocale()` below when the user
+// switches language at runtime, so `t()`/`getLocale()` reflect the new locale immediately
+// without needing a full app restart.
+let { locale: activeLocale, strings: i18nStrings, version: appVersion } = ipcRenderer.sendSync("i18n:get");
 
 /**
  * Inlined rather than imported from app/i18n.js, for the same sandboxed-`require()` reason
@@ -168,8 +171,13 @@ contextBridge.exposeInMainWorld("bridge", {
 });
 
 contextBridge.exposeInMainWorld("i18n", {
-  /** Active locale code (e.g. "en"). Only "en" ships today; see app/locales/. */
-  locale: activeLocale,
+  /**
+   * Active locale code (e.g. "en"). A function, not a plain property — contextBridge
+   * deep-copies plain values at expose time, so a static property would go stale after
+   * `setLocale()` reassigns `activeLocale`; a function reads it fresh every call.
+   * @returns {string}
+   */
+  getLocale: () => activeLocale,
   /**
    * Translate a key from app/locales/<locale>.json, with optional `{placeholder}` substitution.
    * Unknown keys resolve to the key itself rather than throwing.
@@ -180,6 +188,29 @@ contextBridge.exposeInMainWorld("i18n", {
    * i18n.t("status.ariaLabel", { name: "Mixing Station", state: "running" });
    */
   t: (key, vars) => t(key, vars),
+  /** App version (from package.json, via Electron's app.getVersion()). Static, never changes. */
+  version: appVersion,
+  /**
+   * List installed locales as `{code, name}` pairs for populating a language selector.
+   * @returns {Promise<Array<{code: string, name: string}>>}
+   */
+  listLocales: () => ipcRenderer.invoke("i18n:listLocales"),
+  /**
+   * Switch the active UI language at runtime and persist the choice. Updates this
+   * preload's own `t()`/`getLocale()` immediately; the caller still needs to re-apply
+   * translations to the already-rendered DOM (see renderer.js's `applyI18n()`).
+   * @param {string} code
+   * @returns {Promise<{locale: string}>}
+   * @example
+   * await i18n.setLocale("cs");
+   * applyI18n();
+   */
+  setLocale: async (code) => {
+    const result = await ipcRenderer.invoke("i18n:setLocale", code);
+    activeLocale = result.locale;
+    i18nStrings = result.strings;
+    return { locale: activeLocale };
+  },
 });
 
 contextBridge.exposeInMainWorld("presets", {

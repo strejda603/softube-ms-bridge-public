@@ -4,7 +4,16 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const { parseCliArgs, getUserArgv } = require("./cliArgs");
 const { startStatusMonitor } = require("./statusMonitor");
-const { resolveLocale, loadLocaleStrings } = require("./i18n");
+const { resolveLocale, loadLocaleStrings, listAvailableLocales, DEFAULT_LOCALE } = require("./i18n");
+
+// `app.getVersion()` only reads package.json's "version" when Electron is launched
+// against a directory (`electron .`); this project's `npm run gui` launches it as
+// `electron app/main.js` (a direct script path), which Electron does NOT associate
+// with the project's package.json — `app.getVersion()` falls back to Electron's own
+// bundled version in that mode. Reading the file directly sidesteps that entirely and
+// works identically in dev and in the electron-builder package (which also ships
+// package.json at the asar root per the `files` list in package.json's `build` config).
+const BRIDGE_VERSION = require("../package.json").version;
 
 // --- CLI args & single-instance lock ---
 // CLI flags
@@ -29,13 +38,40 @@ for (const warning of initialCliArgs.warnings) {
   console.warn(`[cli] ${warning}`);
 }
 
+/**
+ * Small persisted GUI-only preferences (currently just the chosen UI language). Kept
+ * separate from bridge-config.json/presets since these are Electron-GUI concerns the
+ * bridge process itself never needs to see. Uses the same `getUserDataFile`/`ensureDir`
+ * helpers presets/bridge-config.json use — both are function declarations further down
+ * this file, safe to call here due to hoisting.
+ */
+function loadAppSettings() {
+  try {
+    const raw = fs.readFileSync(getUserDataFile("app-settings.json"), "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function saveAppSettings(settings) {
+  const filePath = getUserDataFile("app-settings.json");
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), "utf8");
+}
+
+let appSettings = loadAppSettings();
+
 // Loaded once at process start (app.getLocale() is only reliable in the main process —
-// see i18n:get below for why preload can't just load this itself).
-const activeLocale = resolveLocale(app.getLocale());
-const i18nStrings = loadLocaleStrings(activeLocale);
+// see i18n:get below for why preload can't just load this itself). A saved user choice
+// (see i18n:setLocale below) takes priority over the OS-detected locale. `let`, not
+// `const`: i18n:setLocale reassigns both when the user switches language at runtime.
+let activeLocale = resolveLocale(appSettings.locale || app.getLocale());
+let i18nStrings = loadLocaleStrings(activeLocale);
 
 /**
- * Hand the resolved locale + strings to preload.js synchronously.
+ * Hand the resolved locale + strings (+ app version, for the sidebar's version display)
+ * to preload.js synchronously.
  *
  * preload.js runs sandboxed (Electron's default since v20) and can't `require()` a local
  * project file like `./i18n` — only a small built-in whitelist resolves there. Loading the
@@ -44,7 +80,25 @@ const i18nStrings = loadLocaleStrings(activeLocale);
  * needs, and both are always available to it.
  */
 ipcMain.on("i18n:get", (event) => {
-  event.returnValue = { locale: activeLocale, strings: i18nStrings };
+  event.returnValue = { locale: activeLocale, strings: i18nStrings, version: BRIDGE_VERSION };
+});
+
+/** List installed locales as `{code, name}` pairs, `name` from each locale's own `meta.localeName`. */
+ipcMain.handle("i18n:listLocales", () => {
+  return listAvailableLocales().map((code) => {
+    const strings = loadLocaleStrings(code);
+    return { code, name: strings["meta.localeName"] || code };
+  });
+});
+
+/** Switch the active UI language at runtime and persist the choice for future launches. */
+ipcMain.handle("i18n:setLocale", (event, code) => {
+  const resolved = listAvailableLocales().includes(code) ? code : DEFAULT_LOCALE;
+  activeLocale = resolved;
+  i18nStrings = loadLocaleStrings(resolved);
+  appSettings = { ...appSettings, locale: resolved };
+  saveAppSettings(appSettings);
+  return { locale: activeLocale, strings: i18nStrings };
 });
 
 /**

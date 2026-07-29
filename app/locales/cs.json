@@ -1,4 +1,6 @@
 {
+  "meta.localeName": "Čeština",
+
   "app.title": "Softube-MS-Bridge",
   "app.subtitle": "Console 1 ↔ Mixing Station",
 
@@ -68,6 +70,10 @@
   "trackLayout.busCountLabel": "Počet sběrnic",
   "trackLayout.busOrderAriaLabel": "Pořadí stop sběrnic",
   "trackLayout.unorganizedBusesAriaLabel": "Neuspořádané stopy sběrnic",
+  "trackLayout.restUnassigned": "nepřiřazeno",
+  "trackLayout.restDragHint": "Přetáhnout",
+  "trackLayout.link": "Spojit",
+  "trackLayout.unlink": "Rozpojit",
 
   "sendsMapping.title": "Mapování Sends",
   "sendsMapping.subhead": "Mapování Sends 1-6 na sběrnice",
@@ -85,5 +91,9 @@
 
   "console.title": "Výstup konzole",
   "console.clear": "Vymazat",
-  "console.autoScroll": "Automatické posouvání"
+  "console.autoScroll": "Automatické posouvání",
+
+  "sidebar.languageLabel": "Jazyk",
+  "sidebar.languageAriaLabel": "Jazyk rozhraní",
+  "sidebar.version": "Verze {version}"
 }

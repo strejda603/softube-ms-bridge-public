@@ -1,4 +1,6 @@
 {
+  "meta.localeName": "English",
+
   "app.title": "Softube-MS-Bridge",
   "app.subtitle": "Console 1 ↔ Mixing Station",
 
@@ -56,6 +58,10 @@
   "trackLayout.busCountLabel": "Bus count",
   "trackLayout.busOrderAriaLabel": "Bus track order",
   "trackLayout.unorganizedBusesAriaLabel": "Unorganized bus tracks",
+  "trackLayout.restUnassigned": "unassigned",
+  "trackLayout.restDragHint": "Drag",
+  "trackLayout.link": "Link",
+  "trackLayout.unlink": "Unlink",
 
   "sendsMapping.title": "Sends Mapping",
   "sendsMapping.subhead": "Sends 1-6 map to Buses",
@@ -73,5 +79,9 @@
 
   "console.title": "Console Output",
   "console.clear": "Clear",
-  "console.autoScroll": "Auto-scroll"
+  "console.autoScroll": "Auto-scroll",
+
+  "sidebar.languageLabel": "Language",
+  "sidebar.languageAriaLabel": "Interface language",
+  "sidebar.version": "Version {version}"
 }

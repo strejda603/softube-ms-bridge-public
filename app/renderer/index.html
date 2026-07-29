@@ -53,7 +53,7 @@
             </span>
           </div>
           <div class="badge" id="mode">Mode: —</div>
-          <div class="status" id="status" data-i18n="topbar.stopped">Stopped</div>
+          <div class="status" id="status">Stopped</div>
           <button
             class="btn primary hidden"
             id="btnApply"
@@ -122,6 +122,21 @@
               Drag to reorder (or use <b>↑/↓</b>). Use <b>Link</b> to group adjacent channels as
               stereo, and <b>Unlink</b> to split.
             </div>
+          </div>
+
+          <div class="sidebar-footer">
+            <div class="row">
+              <label class="label" for="languageSelect" data-i18n="sidebar.languageLabel">
+                Language
+              </label>
+              <select
+                id="languageSelect"
+                class="select"
+                data-i18n-aria-label="sidebar.languageAriaLabel"
+                aria-label="Interface language"
+              ></select>
+            </div>
+            <div class="muted small" id="appVersion"></div>
           </div>
         </aside>
 
