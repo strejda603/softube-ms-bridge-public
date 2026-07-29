@@ -2580,13 +2580,13 @@ const CONSOLE1_DSP_FIELD_METADATA = (() => {
     filterPreGain: { name: "Pre Gain", quantisation: 0, kind: "db", defaultValue: 0.5 },
     filterPhaseInvert: { name: "Phase Invert", quantisation: 2, kind: "bool", defaultValue: 0 },
     compOn: { name: "Comp On", quantisation: 2, kind: "bool", defaultValue: 0 },
-    compRatio: { name: "Comp Ratio", quantisation: 0, kind: "ratio", defaultValue: 0 },
-    compAttack: { name: "Comp Attack", quantisation: 0, kind: "ms", defaultValue: 0 },
-    compRelease: { name: "Comp Release", quantisation: 0, kind: "ms", defaultValue: 0 },
-    compMakeup: { name: "Comp Makeup", quantisation: 0, kind: "db", defaultValue: 0 },
-    compComp: { name: "Comp Threshold", quantisation: 0, kind: "db", defaultValue: 0 },
-    compKnee: { name: "Comp Knee", quantisation: 0, kind: "raw", defaultValue: 0 },
-    compWetdry: { name: "Comp Wet/Dry", quantisation: 0, kind: "percent", defaultValue: 0 },
+    compRatio: { name: "Ratio", quantisation: 12, kind: "ratio", defaultValue: 0 },
+    compAttack: { name: "Attack", quantisation: 0, kind: "ms", defaultValue: 0 },
+    compRelease: { name: "Release", quantisation: 0, kind: "ms", defaultValue: 0 },
+    compMakeup: { name: "Gain", quantisation: 0, kind: "db", defaultValue: 0 },
+    compComp: { name: "Threshold", quantisation: 0, kind: "db", defaultValue: 0 },
+    compKnee: { name: "Knee", quantisation: 6, kind: "knee", defaultValue: 0 },
+    compWetdry: { name: "Wet/Dry", quantisation: 0, kind: "percent", defaultValue: 0 },
   };
   for (let n = 1; n <= EQ_BAND_COUNT; n++) {
     meta[`eq${n}On`] = { name: `EQ ${n} On`, quantisation: 2, kind: "bool", defaultValue: 0 };
@@ -2634,6 +2634,8 @@ function formatConsole1DspDisplayValue(kind, value, realVal) {
       return `${n.toFixed(1)} ms`;
     case "ratio":
       return `${n.toFixed(1)}:1`;
+    case "knee":
+      return n.toFixed(0);
     case "raw":
       return n.toFixed(2);
     default:
