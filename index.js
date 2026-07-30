@@ -796,9 +796,9 @@ function refreshDspFieldsForRealChannels() {
     requestMixingStationValue(`ch.${ch}.preamp.filter.0.on`, "val");
     requestMixingStationValue(`ch.${ch}.preamp.filter.0.freq`, "norm");
     requestMixingStationValue(`ch.${ch}.preamp.filter.0.freq`, "val");
-    requestMixingStationValue(`ch.${ch}.preamp.trim`, "norm");
-    requestMixingStationValue(`ch.${ch}.preamp.trim`, "val");
+    requestMixingStationValue(`ch.${ch}.headamp.gain`, "val");
     requestMixingStationValue(`ch.${ch}.preamp.inv`, "val");
+    requestMixingStationValue(`ch.${ch}.peq.on`, "val");
 
     for (let i = 0; i < EQ_BAND_COUNT; i++) {
       requestMixingStationValue(`ch.${ch}.peq.bands.${i}.freq`, "norm");
@@ -1186,9 +1186,12 @@ function subscribeToRequiredChannelData() {
   // the "norm" (0..1) value above is what actually drives Console 1's own knob/on-off
   // state. See CONSOLE1_DSP_REAL_VALUE_CACHE's JSDoc for why these must stay separate.
   subscribeToChannelData("ch.*.preamp.filter.0.freq", "val");
-  subscribeToChannelData("ch.*.preamp.trim", "norm");
-  subscribeToChannelData("ch.*.preamp.trim", "val");
+  // `headamp.gain` (real mic preamp gain, -12..60 dB) only offers "val" — no "norm"
+  // companion — so the 0..1 Console 1 knob position is derived locally via
+  // headampGainDbToNormalized() instead of subscribing to a normalized form.
+  subscribeToChannelData("ch.*.headamp.gain", "val");
   subscribeToChannelData("ch.*.preamp.inv", "val");
+  subscribeToChannelData("ch.*.peq.on", "val");
 
   for (let i = 0; i < EQ_BAND_COUNT; i++) {
     subscribeToChannelData(`ch.*.peq.bands.${i}.freq`, "norm");
@@ -1868,7 +1871,7 @@ function createDefaultTrackForSlot(objectId) {
     send6: 0,
     filterLcOn: false,
     filterLcFreq: 0,
-    filterPreGain: 0.5,
+    filterPreGain: headampGainDbToNormalized(0),
     filterPhaseInvert: false,
     eq1On: false,
     eq1Freq: 0.5,
@@ -2145,12 +2148,21 @@ function applyMsParamToTrack(track, paramPath, value, format) {
       if (format === "val") setRealValueOnly("filterLcFreq", value);
       else setCacheOnly("filterLcFreq", value);
       break;
-    case "preamp.trim":
-      if (format === "val") setRealValueOnly("filterPreGain", value);
-      else setCacheOnly("filterPreGain", value);
+    case "headamp.gain":
+      // Only ever arrives as "val" (real dB, -12..60) — no "norm" companion exists for
+      // this path, so the 0..1 Console 1 knob position is derived here rather than via
+      // the dual norm+val subscription pattern used elsewhere.
+      setRealValueOnly("filterPreGain", value);
+      setCacheOnly("filterPreGain", headampGainDbToNormalized(value));
       break;
     case "preamp.inv":
       setCacheOnly("filterPhaseInvert", !!value);
+      break;
+    case "peq.on":
+      // MS has one global EQ on/off, not per-band — fan the single switch state out to
+      // all 4 bands' On buttons so they stay in lockstep (see handleMidiEqUpdate's JSDoc
+      // for the matching outbound direction).
+      for (let n = 1; n <= EQ_BAND_COUNT; n++) setCacheOnly(`eq${n}On`, !!value);
       break;
     default: {
       const sendMatch = paramPath.match(/^mix\.sends\.(\d+)\.(lvl|on)$/);
@@ -2545,6 +2557,24 @@ function eqTypeNormalizedToIndex(normalized) {
   return Math.min(MS_EQ_TYPE_NAMES.length - 1, Math.max(0, idx));
 }
 
+// `ch.<n>.headamp.gain` (the real mic preamp gain, confirmed via `docs/ws-data-dump.jsonl`
+// real hardware capture) only ever offers Mixing Station's "val" format — no "norm"
+// companion — unlike `preamp.trim`. So this bridge does its own linear dB<->0..1
+// conversion for Console 1's normalized knob value, instead of the dual norm+val
+// subscription pattern used elsewhere.
+const HEADAMP_GAIN_MIN_DB = -12;
+const HEADAMP_GAIN_MAX_DB = 60;
+
+/** @param {number} db @returns {number} 0..1 */
+function headampGainDbToNormalized(db) {
+  return clamp01((db - HEADAMP_GAIN_MIN_DB) / (HEADAMP_GAIN_MAX_DB - HEADAMP_GAIN_MIN_DB));
+}
+
+/** @param {number} normalized - 0..1 @returns {number} dB */
+function headampGainNormalizedToDb(normalized) {
+  return HEADAMP_GAIN_MIN_DB + clamp01(normalized) * (HEADAMP_GAIN_MAX_DB - HEADAMP_GAIN_MIN_DB);
+}
+
 /**
  * Per-field metadata for the OSD app's bare property-update rendering.
  *
@@ -2577,7 +2607,12 @@ const CONSOLE1_DSP_FIELD_METADATA = (() => {
   const meta = {
     filterLcOn: { name: "Low Cut On", quantisation: 2, kind: "bool", defaultValue: 0 },
     filterLcFreq: { name: "Low Cut Freq", quantisation: 0, kind: "hz", defaultValue: 0 },
-    filterPreGain: { name: "Pre Gain", quantisation: 0, kind: "db", defaultValue: 0.5 },
+    filterPreGain: {
+      name: "Input Gain",
+      quantisation: 0,
+      kind: "db",
+      defaultValue: headampGainDbToNormalized(0),
+    },
     filterPhaseInvert: { name: "Phase Invert", quantisation: 2, kind: "bool", defaultValue: 0 },
     compOn: { name: "Comp On", quantisation: 2, kind: "bool", defaultValue: 0 },
     compRatio: { name: "Ratio", quantisation: 12, kind: "ratio", defaultValue: 0 },
@@ -3625,14 +3660,15 @@ function handleMidiSendSlotsUpdate(parsed, slot, track, writes) {
 }
 
 /**
- * Handle Filter (low-cut, pre-gain, phase-invert) updates from Console 1.
+ * Handle Filter (low-cut, input gain, phase-invert) updates from Console 1.
  *
  * Console 1's Filter section also has a high-cut stage (`filterHcOn`/`filterHcFreq`)
  * and a slope field — none of those have a Mixing Station destination
  * (`preamp.filter.0` is a single filter stage, not a pair; `preamp` has no slope
- * concept), so only low-cut is mapped. Pre-gain (`filterPreGain` -> `preamp.trim`) and
- * phase invert (`filterPhaseInvert` -> `preamp.inv`) DO have a clean 1:1 Mixing Station
- * destination and are mapped. See the design doc for the full rationale.
+ * concept), so only low-cut is mapped. Input gain (`filterPreGain` -> `headamp.gain`,
+ * the real mic preamp gain, -12..60 dB) and phase invert (`filterPhaseInvert` ->
+ * `preamp.inv`) DO have a clean 1:1 Mixing Station destination and are mapped. See the
+ * design doc for the full rationale.
  *
  * Echoed back to Console 1 via `queueConsole1BareFieldUpdate` (bare single-property
  * SysEx, NOT `trackBatch` — see that function's JSDoc and the design doc's regression
@@ -3670,13 +3706,18 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
     }
   }
 
-  const preGain = readC1DspValue(parsed.filterPreGain);
-  if (preGain !== undefined) {
-    const next = clamp01(Number(preGain));
+  const inputGain = readC1DspValue(parsed.filterPreGain);
+  if (inputGain !== undefined) {
+    const next = clamp01(Number(inputGain));
     track.filterPreGain = next;
     queueConsole1BareFieldUpdate(track, "filterPreGain", next);
+    // headamp.gain only accepts "val" (real dB, -12..60) — no "norm" form exists.
     for (const ch of slot.msChannels) {
-      writes.push({ msPath: `ch.${ch}.preamp.trim`, value: next, format: "norm" });
+      writes.push({
+        msPath: `ch.${ch}.headamp.gain`,
+        value: headampGainNormalizedToDb(next),
+        format: "val",
+      });
     }
   }
 
@@ -3694,10 +3735,12 @@ function handleMidiFilterUpdate(parsed, slot, track, writes) {
 /**
  * Handle 4-band parametric EQ updates from Console 1 (`eq1..eq4` × `On/Freq/Gain/Q/Type`).
  *
- * `eq{N}On` (per-band on/off) has no Mixing Station destination — MS only exposes a
- * single global `peq.on`, not per-band — so it's echoed back to Console 1 (to avoid a
- * visual snap-back on the OSD, same reasoning as the optimistic updates elsewhere in
- * this file) but never written to Mixing Station. `eq{N}Type` is a discrete index, not
+ * `eq{N}On` (per-band on/off) has no per-band Mixing Station destination — MS only
+ * exposes a single global `peq.on`, not per-band — so toggling ANY band's On button
+ * drives that one shared switch; the inbound side (`applyMsParamToTrack`'s `"peq.on"`
+ * case) then fans the resulting state back out to all 4 bands' On buttons, so they stay
+ * in lockstep with each other and with MS's single switch (never independently
+ * controllable, matching what MS itself supports). `eq{N}Type` is a discrete index, not
  * a continuous 0..1 value, so it's passed through as a raw integer rather than clamped.
  *
  * Echoed back to Console 1 via `queueConsole1BareFieldUpdate` (bare single-property
@@ -3720,6 +3763,9 @@ function handleMidiEqUpdate(parsed, slot, track, writes) {
       const nextOn = !!on;
       track[`eq${n}On`] = nextOn;
       queueConsole1BareFieldUpdate(track, `eq${n}On`, nextOn);
+      for (const ch of slot.msChannels) {
+        writes.push({ msPath: `ch.${ch}.peq.on`, value: nextOn ? 1 : 0 });
+      }
     }
 
     const freq = readC1DspValue(parsed[`eq${n}Freq`]);
