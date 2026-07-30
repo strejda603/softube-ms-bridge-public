@@ -27,6 +27,25 @@ compile_commands.json
 .envrc
 .worktrees/
 .ableton-prefs-diff/
+bridge-config.json
+**/sync-public-edition.sh
+
+### macOS ###
+._*
+.AppleDouble
+.LSOverride
+.AppleDB
+.AppleDesktop
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.fseventsd
+.DocumentRevisions-V100
+Network Trash Folder
+Temporary Items
+.apdisk
 
 ### AI ###
 .claude/
