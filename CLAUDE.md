@@ -48,10 +48,13 @@ payload; `LOG_METERING=1` logs metering parsing/subscription details.
   `@@BRIDGE_EVENT@@{...json...}` prefixed lines.
 - Pure, side-effect-free logic that needs unit tests is deliberately extracted into small
   sibling modules and `require()`'d into `index.js`: `valueCoercion.js`, `panUtils.js`,
-  `midiColorUtils.js`, `meteringUtils.js`, `console1StatusBank.js`. Each has a matching
-  `test/*.test.js` (flat `node:test` `test("name", ...)` calls, not `describe`/`it`).
-  When adding new bridge logic that's testable in isolation, follow this split rather
-  than adding untested logic directly to `index.js`.
+  `midiColorUtils.js`, `meteringUtils.js`. Each has a matching `test/*.test.js` (flat
+  `node:test` `test("name", ...)` calls, not `describe`/`it`). When adding new bridge
+  logic that's testable in isolation, follow this split rather than adding untested
+  logic directly to `index.js`.
+- This is **public-edition**: no Console 1 hardware Status/Start bank (that's a
+  `main`-only feature). The GUI's topbar only shows two status indicators — Mixing
+  Station and Console 1 On-Screen Display — see `app/statusMonitor.js`.
 
 ### Electron preload is sandboxed — no local `require()`
 
