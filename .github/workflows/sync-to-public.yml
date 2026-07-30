@@ -1,0 +1,27 @@
+name: Sync to public repo
+
+# Mirrors this branch to strejda603/softube-ms-bridge-public's "main" branch on every
+# push. Force-pushes, since the two repos have unrelated git histories (the public repo
+# was not forked from this one). Requires a Personal Access Token with push access to
+# the public repo, stored as the PUBLIC_REPO_TOKEN secret on THIS repo (Settings ->
+# Secrets and variables -> Actions -> New repository secret) — the default GITHUB_TOKEN
+# can't push to a different repository.
+
+on:
+  push:
+    branches: [public-edition]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Force-push to public repo
+        run: |
+          git push "https://x-access-token:${PUBLIC_REPO_TOKEN}@github.com/strejda603/softube-ms-bridge-public.git" HEAD:main --force
+        env:
+          PUBLIC_REPO_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
