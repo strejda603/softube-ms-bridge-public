@@ -1,0 +1,66 @@
+name: Build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: build:mac
+            args: ''
+          - os: windows-latest
+            script: build:win
+            args: ''
+          - os: ubuntu-latest
+            script: build:linux
+            args: '-- --x64'
+          - os: ubuntu-24.04-arm
+            script: build:linux
+            args: '-- --arm64'
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ALSA dev headers (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - run: npm ci
+
+      - run: npm run ${{ matrix.script }} ${{ matrix.args }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/**
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

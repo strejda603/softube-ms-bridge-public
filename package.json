@@ -1,6 +1,6 @@
 {
   "name": "softube-mixingstation-bridge",
-  "version": "2.1.0",
+  "version": "1.1.0",
   "description": "Bridge between Softube Console 1 and Mixing Station API",
   "main": "index.js",
   "scripts": {
@@ -26,10 +26,10 @@
     "ws",
     "websocket"
   ],
-  "author": "Strejda603",
+  "author": "Strejda603 <strejda603@centrum.cz>",
   "license": "GPL-3.0-only",
   "dependencies": {
-    "@julusian/midi": "^3.7.2",
+    "@julusian/midi": "^3.8.0",
     "ws": "^8.21.1"
   },
   "devDependencies": {
@@ -63,29 +63,42 @@
       "category": "public.app-category.music",
       "icon": "build/icon.icns",
       "target": [
-        "dmg",
-        "zip"
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
       ],
-      "identity": "-"
+      "identity": "-",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "win": {
       "icon": "build/icon.icon/Assets/icon.png",
       "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+        {
+          "target": "portable",
+          "arch": [
+            "arm64",
+            "x64",
+            "ia32"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "linux": {
       "icon": "build/icon.icon/Assets/icon.png",
       "category": "Audio",
       "target": [
-        "AppImage",
-        "deb"
-      ]
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "deb", "arch": ["x64", "arm64"] }
+      ],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     }
+  },
+  "funding": {
+    "type": "ko-fi",
+    "url": "https://ko-fi.com/strejda603"
+  },
+  "allowScripts": {
+    "@julusian/midi": true,
+    "electron-winstaller": true
   }
 }

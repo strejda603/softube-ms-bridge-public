@@ -20,6 +20,9 @@
 node_modules/
 SHASUMS256.txt
 **/package-lock.json
+# public-edition tracks its own root lockfile for reproducible CI builds (`npm ci` in
+# .github/workflows/build.yml) — nested package-lock.json files elsewhere still ignored.
+!/package-lock.json
 compile_commands.json
 .envrc
 .worktrees/
