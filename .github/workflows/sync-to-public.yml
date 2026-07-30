@@ -19,9 +19,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Force-push to public repo
         run: |
+          if [ -z "$PUBLIC_REPO_TOKEN" ]; then
+            echo "::error::PUBLIC_REPO_TOKEN secret is not set on this repo (Settings -> Secrets and variables -> Actions). Without it this job can only see the default GITHUB_TOKEN, which has no access to the public repo."
+            exit 1
+          fi
           git push "https://x-access-token:${PUBLIC_REPO_TOKEN}@github.com/strejda603/softube-ms-bridge-public.git" HEAD:main --force
         env:
           PUBLIC_REPO_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
