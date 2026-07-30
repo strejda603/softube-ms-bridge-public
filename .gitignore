@@ -1,4 +1,3 @@
-.DS_Store
 .env
 .gclient_done
 **/.npmrc
@@ -31,6 +30,7 @@ bridge-config.json
 **/sync-public-edition.sh
 
 ### macOS ###
+.DS_Store
 ._*
 .AppleDouble
 .LSOverride
