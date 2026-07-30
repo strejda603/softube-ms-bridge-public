@@ -51,6 +51,7 @@
     "files": [
       "app/**/*",
       "*.js",
+      "LICENSE",
       "package.json",
       "README.md"
     ],
