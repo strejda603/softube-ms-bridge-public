@@ -227,3 +227,10 @@ contextBridge.exposeInMainWorld("presets", {
   import: () => ipcRenderer.invoke("presets:import"),
   openFolder: () => ipcRenderer.invoke("presets:openFolder"),
 });
+
+contextBridge.exposeInMainWorld("updates", {
+  /** @returns {Promise<{available: boolean, latestVersion?: string, downloadUrl?: string, releaseUrl?: string, error?: boolean}>} */
+  check: () => ipcRenderer.invoke("update:check"),
+  /** @param {string} url */
+  openDownload: (url) => ipcRenderer.invoke("update:openDownload", url),
+});
