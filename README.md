@@ -17,7 +17,7 @@ It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and 
 - [Quick start (CLI)](#quick-start-cli)
 - [GUI launcher](#gui-launcher)
 - [What it supports](#what-it-supports)
-- [macOS app (.app) build](#macos-app-app-build)
+- [Building the desktop app](#building-the-desktop-app)
 - [Localization](#localization)
 - [Track layout (banks + ordering)](#track-layout-banks--ordering)
 - [Sends](#sends)
@@ -98,17 +98,21 @@ instance instead of opening a second window.
 
 Note: Bus master solo is intentionally ignored (both directions), to avoid surprising “solo the whole bus” behavior.
 
-## macOS app (.app) build
+## Building the desktop app
 
-Build a standalone macOS app bundle (plus `.dmg` and `.zip` artifacts):
+Build a standalone app for your platform with `electron-builder`:
 
 1. Install deps:
 
   `npm install`
 
-2. Build:
+2. Build for your platform:
 
-  `npm run build:mac`
+| Platform | Command | Artifacts |
+|---|---|---|
+| macOS | `npm run build:mac` | `.app` bundle, `.dmg`, `.zip` (x64 + arm64) |
+| Windows | `npm run build:win` | portable `.exe` (arm64, x64, ia32) |
+| Linux | `npm run build:linux` | `.AppImage`, `.deb` (x64 + arm64) |
 
 Artifacts are written to `dist/`.
 
