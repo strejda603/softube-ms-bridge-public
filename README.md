@@ -111,8 +111,8 @@ Build a standalone app for your platform with `electron-builder`:
 | Platform | Command | Artifacts |
 |---|---|---|
 | macOS | `npm run build:mac` | `.app` bundle, `.dmg`, `.zip` (x64 + arm64) |
-| Windows | `npm run build:win` | portable `.exe` (arm64, x64, ia32) |
-| Linux | `npm run build:linux` | `.AppImage`, `.deb` (x64 + arm64) |
+| Windows | `npm run build:win` | portable `.exe` (x64) |
+| Linux | `npm run build:linux` | `.deb` package (x64) |
 
 Artifacts are written to `dist/`.
 
