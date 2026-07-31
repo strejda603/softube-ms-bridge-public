@@ -645,14 +645,20 @@ ipcMain.handle("update:check", async () => {
       downloadUrl: asset ? asset.browserDownloadUrl : release.htmlUrl,
       releaseUrl: release.htmlUrl,
     };
-  } catch {
+  } catch (e) {
+    console.warn("[update] check failed:", e?.message || e);
     return { available: false, error: true };
   }
 });
 
 ipcMain.handle("update:openDownload", async (_evt, url) => {
-  if (typeof url === "string" && /^https:\/\//.test(url)) {
-    await shell.openExternal(url);
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:" && parsed.hostname === "github.com") {
+      await shell.openExternal(url);
+    }
+  } catch {
+    // Malformed URL — ignore, nothing to open.
   }
   return { ok: true };
 });
