@@ -61,4 +61,29 @@ function pickReleaseAsset(assets, platform, arch) {
   return archMatch || candidates[0] || null;
 }
 
-module.exports = { isNewerVersion, pickReleaseAsset };
+/**
+ * Fetches the latest published release for a `owner/repo` GitHub repository.
+ * Electron 43 bundles a Node runtime with a global `fetch`, so no HTTP dependency
+ * is needed here.
+ * @param {string} repo e.g. "strejda603/softube-ms-bridge-public"
+ * @returns {Promise<{tagName: string, htmlUrl: string, assets: Array<{name: string, browserDownloadUrl: string}>}>}
+ * @throws {Error} if the request fails or the API responds with a non-OK status
+ */
+async function fetchLatestRelease(repo) {
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub API returned ${res.status} for ${repo}`);
+  }
+  const json = await res.json();
+  return {
+    tagName: json.tag_name,
+    htmlUrl: json.html_url,
+    assets: Array.isArray(json.assets)
+      ? json.assets.map((asset) => ({ name: asset.name, browserDownloadUrl: asset.browser_download_url }))
+      : [],
+  };
+}
+
+module.exports = { isNewerVersion, pickReleaseAsset, fetchLatestRelease };
