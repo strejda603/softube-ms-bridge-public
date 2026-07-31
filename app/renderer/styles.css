@@ -503,3 +503,19 @@ code {
 .small {
   font-size: 12px;
 }
+
+.kofi-container {
+  max-height: 35px !important;
+}
+
+a.kofi-button {
+  height: auto !important;
+  line-height: 35px !important;  /* Musí se shodovat s výškou pro vertikální vycentrování */
+  padding: 1px 12px !important;  /* Nulový horní/dolní padding, aby nerozhodil výšku */
+  font-size: 13px !important; /* Nastavení velikosti písma */
+}
+
+span.kofitext {
+  line-height: 35px !important; /* Resetuje původních 33px, které by tlačítko deformovaly */
+  height: 35px !important;
+}
