@@ -5,6 +5,10 @@ const { spawn } = require("child_process");
 const { parseCliArgs, getUserArgv } = require("./cliArgs");
 const { startStatusMonitor } = require("./statusMonitor");
 const { resolveLocale, loadLocaleStrings, listAvailableLocales, DEFAULT_LOCALE } = require("./i18n");
+const { isNewerVersion, pickReleaseAsset, fetchLatestRelease } = require("./updateChecker");
+
+/** Public repo whose GitHub Releases this GUI checks against (see docs/superpowers/specs/2026-07-31-update-checker-design.md). */
+const UPDATE_CHECK_REPO = "strejda603/softube-ms-bridge-public";
 
 // `app.getVersion()` only reads package.json's "version" when Electron is launched
 // against a directory (`electron .`); this project's `npm run gui` launches it as
@@ -623,5 +627,32 @@ ipcMain.handle("presets:import", async (evt) => {
 ipcMain.handle("presets:openFolder", async () => {
   const presetsDir = getPresetsDir();
   await shell.openPath(presetsDir);
+  return { ok: true };
+});
+
+// --- IPC handlers: update checker ---
+ipcMain.handle("update:check", async () => {
+  try {
+    const release = await fetchLatestRelease(UPDATE_CHECK_REPO);
+    if (!isNewerVersion(BRIDGE_VERSION, release.tagName)) {
+      return { available: false };
+    }
+
+    const asset = pickReleaseAsset(release.assets, process.platform, process.arch);
+    return {
+      available: true,
+      latestVersion: String(release.tagName || "").replace(/^v/i, ""),
+      downloadUrl: asset ? asset.browserDownloadUrl : release.htmlUrl,
+      releaseUrl: release.htmlUrl,
+    };
+  } catch {
+    return { available: false, error: true };
+  }
+});
+
+ipcMain.handle("update:openDownload", async (_evt, url) => {
+  if (typeof url === "string" && /^https:\/\//.test(url)) {
+    await shell.openExternal(url);
+  }
   return { ok: true };
 });
