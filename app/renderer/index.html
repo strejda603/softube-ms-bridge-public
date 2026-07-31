@@ -137,6 +137,25 @@
               ></select>
             </div>
             <div class="muted small" id="appVersion"></div>
+
+            <div class="row">
+              <button class="btn" id="btnCheckUpdate" data-i18n="update.checkButton">
+                Check for Updates
+              </button>
+            </div>
+            <div class="muted small hidden" id="updateStatusMsg"></div>
+            <div class="row badge hidden" id="updatePill">
+              <span id="updatePillText"></span>
+              <button class="btn" id="btnUpdateDownload" data-i18n="update.download">Download</button>
+              <button
+                class="btn"
+                id="btnUpdateDismiss"
+                data-i18n-aria-label="update.dismiss"
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            </div>
           </div>
         </aside>
 
