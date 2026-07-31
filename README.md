@@ -1,11 +1,11 @@
 # Softube Console 1 Fader MK III ↔ Mixing Station Bridge
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
-![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/releases/latest)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/blob/main/LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
-![Node.js](https://img.shields.io/badge/node-LTS-339933?logo=node.js&logoColor=white)
-![GUI](https://img.shields.io/badge/GUI-Electron-47848F?logo=electron&logoColor=white)
-![Ko-fi](https://img.shields.io/badge/support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)
+[![Node.js](https://img.shields.io/badge/node-LTS-339933?logo=node.js&logoColor=white)](https://nodejs.org/en)
+[![GUI](https://img.shields.io/badge/GUI-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Ko-fi](https://img.shields.io/badge/support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/K3N223V22V)
 
 Node.js bridge that connects Softube Console 1 Fader MK III (over SysEx MIDI) with the Mixing Station WebSocket API.
 
@@ -259,3 +259,5 @@ On `SIGINT`/`SIGTERM` (Ctrl+C):
 
 If this bridge saves you from buying dedicated hardware, consider supporting continued
 development on [Ko-fi](https://ko-fi.com/strejda603).
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/K3N223V22V)
