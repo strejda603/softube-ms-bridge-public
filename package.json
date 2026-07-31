@@ -12,9 +12,9 @@
     "gui": "electron app/main.js",
     "gui:verbose": "electron app/main.js --verbose",
     "repl": "node tools/ws-repl.js",
-    "build:mac": "electron-builder --mac",
-    "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux",
+    "build:mac": "electron-builder --mac --publish=never",
+    "build:win": "electron-builder --win --publish=never",
+    "build:linux": "electron-builder --linux --publish=never",
     "postinstall": "electron-builder install-app-deps",
     "sync": "tools/sync-public-edition.sh"
   },
