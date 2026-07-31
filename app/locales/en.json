@@ -83,5 +83,13 @@
 
   "sidebar.languageLabel": "Language",
   "sidebar.languageAriaLabel": "Interface language",
-  "sidebar.version": "Version {version}"
+  "sidebar.version": "Version {version}",
+
+  "update.checkButton": "Check for Updates",
+  "update.checking": "Checking…",
+  "update.upToDate": "You're up to date",
+  "update.checkFailed": "Couldn't check for updates",
+  "update.available": "Update v{version} available",
+  "update.download": "Download",
+  "update.dismiss": "Dismiss"
 }

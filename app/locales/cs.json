@@ -95,5 +95,13 @@
 
   "sidebar.languageLabel": "Jazyk",
   "sidebar.languageAriaLabel": "Jazyk rozhraní",
-  "sidebar.version": "Verze {version}"
+  "sidebar.version": "Verze {version}",
+
+  "update.checkButton": "Zkontrolovat aktualizace",
+  "update.checking": "Kontroluji…",
+  "update.upToDate": "Máte nejnovější verzi",
+  "update.checkFailed": "Kontrolu aktualizací se nepodařilo provést",
+  "update.available": "Je dostupná aktualizace v{version}",
+  "update.download": "Stáhnout",
+  "update.dismiss": "Zavřít"
 }
