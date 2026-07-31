@@ -1,6 +1,6 @@
 # Softube Console 1 Fader MK III ↔ Mixing Station Bridge
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/releases/latest)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/blob/main/LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 [![Node.js](https://img.shields.io/badge/node-LTS-339933?logo=node.js&logoColor=white)](https://nodejs.org/en)
