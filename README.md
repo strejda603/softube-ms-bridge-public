@@ -110,7 +110,7 @@ Build a standalone app for your platform with `electron-builder`:
 
 | Platform | Command | Artifacts |
 |---|---|---|
-| macOS | `npm run build:mac` | `.app` bundle, `.dmg`, `.zip` (x64 + arm64) |
+| macOS | `npm run build:mac` | `.dmg`, `.zip` (x64 + arm64) |
 | Windows | `npm run build:win` | portable `.exe` (x64) |
 | Linux | `npm run build:linux` | `.deb` package (x64) |
 
