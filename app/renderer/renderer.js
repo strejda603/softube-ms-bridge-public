@@ -72,6 +72,7 @@ async function setupLanguageSelector() {
     // Elements filled imperatively (not via data-i18n*) don't get touched by
     // applyI18n() above, so they each need an explicit re-render here.
     renderAppVersion();
+    renderUpdatePill(lastUpdateInfo);
     setModeUi(currentMode === "—" ? undefined : currentMode);
     setStatusUi();
     renderList("input");
@@ -85,6 +86,62 @@ function renderAppVersion() {
   const el = document.getElementById("appVersion");
   if (!el) return;
   el.textContent = t("sidebar.version", { version: i18n.version });
+}
+
+/** Last successful "available" result from `updates.check()`, kept so a locale switch can re-render the pill's text without re-fetching. */
+let lastUpdateInfo = null;
+
+/**
+ * Render (or hide) the update-available pill in the sidebar footer.
+ * @param {{available: boolean, latestVersion?: string, downloadUrl?: string, releaseUrl?: string}|null} info
+ */
+function renderUpdatePill(info) {
+  const pill = document.getElementById("updatePill");
+  const textEl = document.getElementById("updatePillText");
+  if (!pill || !textEl) return;
+
+  if (!info || !info.available) {
+    pill.classList.add("hidden");
+    return;
+  }
+
+  lastUpdateInfo = info;
+  textEl.textContent = t("update.available", { version: info.latestVersion });
+  pill.classList.remove("hidden");
+}
+
+/**
+ * Show a transient status message under the "Check for Updates" button
+ * (used for the manual-check up-to-date / error outcomes). Auto-clears
+ * after 4 seconds.
+ * @param {string} key i18n key
+ */
+function showUpdateStatusMessage(key) {
+  const el = document.getElementById("updateStatusMsg");
+  if (!el) return;
+  el.textContent = t(key);
+  el.classList.remove("hidden");
+  setTimeout(() => {
+    el.classList.add("hidden");
+  }, 4000);
+}
+
+/**
+ * Runs an update check against the public repo's GitHub Releases.
+ * @param {{silent: boolean}} opts `silent: true` for the automatic on-launch check
+ *   (no "up to date"/error feedback); `false` for the manual button (always shows a result).
+ */
+async function checkForUpdate({ silent }) {
+  const result = await window.updates.check();
+
+  if (result.available) {
+    renderUpdatePill(result);
+    return;
+  }
+
+  if (silent) return;
+
+  showUpdateStatusMessage(result.error ? "update.checkFailed" : "update.upToDate");
 }
 
 // When Electron is launched with `--verbose`, main passes `?verbose=1`.
@@ -1589,6 +1646,10 @@ async function init() {
   applyI18n();
   renderAppVersion();
   setModeUi(undefined);
+  checkForUpdate({ silent: true }).catch(() => {
+    // Silent on-launch check: any failure is already handled inside checkForUpdate
+    // via result.error, but guard here too in case window.updates.check() itself rejects.
+  });
   await setupLanguageSelector();
 
   setFormFromConfig(
@@ -1695,6 +1756,21 @@ async function init() {
       applyInProgress = false;
       updateApplyButton();
     }
+  });
+
+  document.getElementById("btnCheckUpdate").addEventListener("click", () => {
+    checkForUpdate({ silent: false }).catch(() => {
+      showUpdateStatusMessage("update.checkFailed");
+    });
+  });
+
+  document.getElementById("btnUpdateDownload").addEventListener("click", () => {
+    if (!lastUpdateInfo) return;
+    window.updates.openDownload(lastUpdateInfo.downloadUrl || lastUpdateInfo.releaseUrl);
+  });
+
+  document.getElementById("btnUpdateDismiss").addEventListener("click", () => {
+    document.getElementById("updatePill").classList.add("hidden");
   });
 
   document.getElementById("btnClearLog").addEventListener("click", () => {
