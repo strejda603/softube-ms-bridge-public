@@ -1,8 +1,31 @@
 # Softube Console 1 Fader MK III ↔ Mixing Station Bridge
 
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
+![Node.js](https://img.shields.io/badge/node-LTS-339933?logo=node.js&logoColor=white)
+![GUI](https://img.shields.io/badge/GUI-Electron-47848F?logo=electron&logoColor=white)
+![Ko-fi](https://img.shields.io/badge/support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)
+
 Node.js bridge that connects Softube Console 1 Fader MK III (over SysEx MIDI) with the Mixing Station WebSocket API.
 
 It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and translates Console 1 controls into Mixing Station writes.
+
+## Table of Contents
+
+- [Requirements](#requirements)
+- [Quick start (CLI)](#quick-start-cli)
+- [GUI launcher](#gui-launcher)
+- [What it supports](#what-it-supports)
+- [macOS app (.app) build](#macos-app-app-build)
+- [Localization](#localization)
+- [Track layout (banks + ordering)](#track-layout-banks--ordering)
+- [Sends](#sends)
+- [Metering](#metering)
+- [Bridge lifecycle (GUI mode)](#bridge-lifecycle-gui-mode)
+- [Shutdown behavior](#shutdown-behavior)
+- [Troubleshooting](#troubleshooting)
+- [Support](#support)
 
 ## Requirements
 
@@ -227,3 +250,8 @@ On `SIGINT`/`SIGTERM` (Ctrl+C):
     GUI's log panel for `[Lifecycle]`-prefixed lines confirming the bridge found the Console 1
     Fader port before pressing Start. The same applies if the bridge process ever crashes and gets
     re-spawned: the very next Start click can race the fresh process's MIDI detection the same way.
+
+## Support
+
+If this bridge saves you from buying dedicated hardware, consider supporting continued
+development on [Ko-fi](https://ko-fi.com/strejda603).
