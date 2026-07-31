@@ -91,6 +91,9 @@ function renderAppVersion() {
 /** Last successful "available" result from `updates.check()`, kept so a locale switch can re-render the pill's text without re-fetching. */
 let lastUpdateInfo = null;
 
+/** Whether the user dismissed the update pill this session; suppresses auto re-renders (e.g. on locale switch) until reset by a manual check. */
+let updateDismissedThisSession = false;
+
 /**
  * Render (or hide) the update-available pill in the sidebar footer.
  * @param {{available: boolean, latestVersion?: string, downloadUrl?: string, releaseUrl?: string}|null} info
@@ -100,7 +103,7 @@ function renderUpdatePill(info) {
   const textEl = document.getElementById("updatePillText");
   if (!pill || !textEl) return;
 
-  if (!info || !info.available) {
+  if (!info || !info.available || updateDismissedThisSession) {
     pill.classList.add("hidden");
     return;
   }
@@ -132,6 +135,7 @@ function showUpdateStatusMessage(key) {
  *   (no "up to date"/error feedback); `false` for the manual button (always shows a result).
  */
 async function checkForUpdate({ silent }) {
+  if (!silent) updateDismissedThisSession = false;
   const result = await window.updates.check();
 
   if (result.available) {
@@ -1770,6 +1774,7 @@ async function init() {
   });
 
   document.getElementById("btnUpdateDismiss").addEventListener("click", () => {
+    updateDismissedThisSession = true;
     document.getElementById("updatePill").classList.add("hidden");
   });
 
