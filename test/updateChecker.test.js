@@ -77,3 +77,8 @@ test("pickReleaseAsset: unsupported platform returns null", () => {
 test("pickReleaseAsset: empty assets array returns null", () => {
   assert.equal(pickReleaseAsset([], "darwin", "arm64"), null);
 });
+
+test("pickReleaseAsset: platform match but no arch match falls back to first same-platform candidate", () => {
+  const result = pickReleaseAsset(MAC_WIN_LINUX_ASSETS, "darwin", "ia32");
+  assert.equal(result.name, "Softube.Console.1.MS.Bridge-1.2.0-mac-arm64.dmg");
+});

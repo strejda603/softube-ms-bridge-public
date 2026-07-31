@@ -57,6 +57,7 @@ function pickReleaseAsset(assets, platform, arch) {
   );
 
   const archMatch = candidates.find((asset) => asset.name.includes(`-${arch}.`));
+  // Prefer a same-platform installer over no download at all if the exact arch isn't listed.
   return archMatch || candidates[0] || null;
 }
 
