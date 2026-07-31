@@ -57,6 +57,8 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.deb
+            !dist/latest*.yml
+            !dist/*.blockmap
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
