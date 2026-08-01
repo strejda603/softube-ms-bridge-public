@@ -14,7 +14,6 @@
     "repl": "node tools/ws-repl.js",
     "build:mac": "electron-builder --mac --publish=never",
     "build:win": "electron-builder --win --publish=never",
-    "build:linux": "electron-builder --linux --publish=never",
     "postinstall": "electron-builder install-app-deps",
     "sync": "tools/sync-public-edition.sh"
   },
@@ -94,19 +93,6 @@
         }
       ],
       "artifactName": "${productName}-${version}-win-${arch}.${ext}"
-    },
-    "linux": {
-      "icon": "icons/png/",
-      "category": "Audio",
-      "target": [
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     }
   },
   "funding": {

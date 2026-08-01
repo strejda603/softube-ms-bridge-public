@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/blob/main/LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 [![Node.js](https://img.shields.io/badge/node-LTS-339933?logo=node.js&logoColor=white)](https://nodejs.org/en)
 [![GUI](https://img.shields.io/badge/GUI-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Ko-fi](https://img.shields.io/badge/support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/K3N223V22V)
@@ -31,7 +31,8 @@ It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and 
 
 - Node.js (recommended: current LTS)
 - Mixing Station with WebSocket API enabled/reachable (default is `ws://localhost:8080`)
-- Softube Console 1 Fader Mk III MIDI ports available on your system
+- Softube On-Screen Display app installed
+- Softube Console 1 Fader Mk III connected
 
 ## Quick start (CLI)
 
@@ -112,7 +113,6 @@ Build a standalone app for your platform with `electron-builder`:
 |---|---|---|
 | macOS | `npm run build:mac` | `.dmg`, `.zip` (x64 + arm64) |
 | Windows | `npm run build:win` | portable `.exe` (x64) |
-| Linux | `npm run build:linux` | `.deb` package (x64) |
 
 Artifacts are written to `dist/`.
 
