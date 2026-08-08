@@ -51,6 +51,7 @@ Temporary Items
 .claude/
 .omc/
 docs/superpowers/
+.superpowers/
 graphify-out/
 
 ### Node ###
@@ -192,3 +193,9 @@ dist
 
 # SvelteKit build / generate output
 .svelte-kit
+
+### Rust ###
+/target
+crates/**/target
+src-tauri/gen/
+ui-dist/

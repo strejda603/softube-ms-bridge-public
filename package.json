@@ -1,21 +1,19 @@
 {
   "name": "softube-mixingstation-bridge",
-  "version": "1.2.0",
+  "version": "3.0.0",
   "description": "Bridge between Softube Console 1 and Mixing Station API",
-  "main": "index.js",
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\"",
-    "start": "node index.js",
+    "test": "npm run test:frontend && cargo test --workspace",
+    "test:frontend": "vitest run",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "fake:meters": "node tools/fake-metering-proxy.js --verbose",
     "fake:meters:proxy": "node tools/fake-metering-proxy.js --listen 8081 --upstream ws://127.0.0.1:8080",
     "fake:x32": "node tools/fake-metering-proxy.js --x32 --listen 10023",
-    "gui": "electron app/main.js",
-    "gui:verbose": "electron app/main.js --verbose",
     "repl": "node tools/ws-repl.js",
-    "build:mac": "electron-builder --mac --publish=never",
-    "build:win": "electron-builder --win --publish=never",
-    "postinstall": "electron-builder install-app-deps",
-    "sync": "tools/sync-public-edition.sh"
+    "tauri": "tauri"
   },
   "keywords": [
     "softube",
@@ -29,78 +27,24 @@
   "author": "Strejda603 <strejda603@centrum.cz>",
   "license": "GPL-3.0-only",
   "dependencies": {
-    "@julusian/midi": "^3.8.0",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "ws": "^8.21.1"
   },
   "devDependencies": {
-    "electron": "^43.2.0",
-    "electron-builder": "^26.15.3"
-  },
-  "build": {
-    "appId": "com.strejda603.console1msbridge",
-    "productName": "Softube Console 1 MS Bridge",
-    "compression": "maximum",
-    "electronLanguages": [
-      "en",
-      "cs"
-    ],
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "app/**/*",
-      "*.js",
-      "LICENSE",
-      "package.json",
-      "README.md"
-    ],
-    "extraMetadata": {
-      "main": "app/main.js"
-    },
-    "asarUnpack": [
-      "**/*.node"
-    ],
-    "mac": {
-      "category": "public.app-category.music",
-      "icon": "icons/mac/icon.icns",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "identity": "-",
-      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
-    },
-    "win": {
-      "icon": "icons/win/icon.ico",
-      "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
-    }
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tauri-apps/cli": "^2.11.4",
+    "@tsconfig/node22": "^22.0.5",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^22.0.0",
+    "svelte": "^5.56.8",
+    "svelte-check": "^4.7.4",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^3.2.7"
   },
   "funding": {
     "type": "ko-fi",
     "url": "https://ko-fi.com/strejda603"
-  },
-  "allowScripts": {
-    "@julusian/midi": true,
-    "electron-winstaller": true
   }
 }
