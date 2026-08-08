@@ -1,6 +1,6 @@
 [package]
 name = "bridge-tauri"
-version = "3.0.0"
+version = "2.0.0"
 description = "Softube Console 1 MS Bridge — Tauri desktop shell"
 authors = ["Strejda603 <strejda603@centrum.cz>"]
 edition = "2021"
