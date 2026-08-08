@@ -1,21 +1,21 @@
 # Softube Console 1 Fader MK III ↔ Mixing Station Bridge
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/releases/latest)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](https://github.com/strejda603/softube-ms-bridge-public/blob/main/LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
-[![Node.js](https://img.shields.io/badge/node-LTS-339933?logo=node.js&logoColor=white)](https://nodejs.org/en)
-[![GUI](https://img.shields.io/badge/GUI-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Rust](https://img.shields.io/badge/rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![GUI](https://img.shields.io/badge/GUI-Tauri%20%2B%20Svelte-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Ko-fi](https://img.shields.io/badge/support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/K3N223V22V)
 
-Node.js bridge that connects Softube Console 1 Fader MK III (over SysEx MIDI) with the Mixing Station WebSocket API.
+Rust bridge that connects Softube Console 1 Fader MK III (over SysEx MIDI) with the Mixing Station WebSocket API. Ships as a headless CLI (`bridge-cli`) and a Tauri desktop GUI (settings, presets, live logs).
 
 It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and translates Console 1 controls into Mixing Station writes.
 
 ## Table of Contents
 
 - [Requirements](#requirements)
-- [Quick start (CLI)](#quick-start-cli)
-- [GUI launcher](#gui-launcher)
+- [Quick start (headless CLI)](#quick-start-headless-cli)
+- [Desktop GUI](#desktop-gui)
 - [What it supports](#what-it-supports)
 - [Building the desktop app](#building-the-desktop-app)
 - [Localization](#localization)
@@ -29,125 +29,113 @@ It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and 
 
 ## Requirements
 
-- Node.js (recommended: current LTS)
+- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, via `rustup`) — needed to build/run either binary
+- [Node.js](https://nodejs.org/en) (current LTS) — only needed to build the Svelte frontend for the desktop GUI, not for the headless CLI
 - Mixing Station with WebSocket API enabled/reachable (default is `ws://localhost:8080`)
 - Softube On-Screen Display app installed
 - Softube Console 1 Fader Mk III connected
 
-## Quick start (CLI)
+## Quick start (headless CLI)
 
-1. Install dependencies:
+1. Build and run the headless bridge:
 
-   `npm install`
+   `cargo run --package bridge-cli`
 
-2. Start the bridge:
-
-   `npm start`
-
-3. Confirm in the logs:
+2. Confirm in the logs:
 
    - It opens the Console 1 MIDI input/output ports
    - It connects to Mixing Station WebSocket
 
-## GUI launcher
+Configuration is read from `bridge-config.json` in the current directory (override the path with
+the `BRIDGE_CONFIG_PATH` environment variable), with `MIXING_STATION_WS_URL` and `LOG_JSON`
+environment variables taking precedence over the file when set. See
+[`crates/bridge-config`](crates/bridge-config) for every supported field.
 
-This repo includes an Electron-based GUI launcher (settings + presets + live logs).
+## Desktop GUI
 
-Settings include Mixing Station WS URL, metering interval, layout, send mapping, and colors.
+The desktop app is built with [Tauri](https://tauri.app/) v2 (Rust shell) and
+[Svelte](https://svelte.dev/) 5 (frontend) — settings, presets, and live logs, all in one window.
 
-- Run the GUI:
+- Run in development mode:
 
-  `npm run gui`
+  `npm install && npm run tauri dev`
 
-### Verbose GUI mode
-
-If you want verbose debug logs in the Terminal (and a quieter GUI log panel), run:
-
-- `npm run gui -- --verbose`
-
-Or use the convenience script:
-
-- `npm run gui:verbose`
+- Run a built app: see [Building the desktop app](#building-the-desktop-app) below.
 
 ### Command-line arguments
 
-The GUI accepts these flags, e.g. `npm run gui -- --preset "Show A" --start`:
+All CLI flags are applied once, at launch, after the GUI's initial config load — same as the
+old Electron launcher, minus its second-instance-forwarding behavior (running the app a second
+time opens a second window rather than forwarding flags to the first, since no single-instance
+lock is set up in the Tauri app).
 
 | Flag | Effect |
 |---|---|
-| `--start` | Auto-start the bridge with the resolved config |
-| `--stop` | Stop the bridge if running (window stays open) |
-| `--preset "Name"` | Load a preset by its display name before starting |
-| `--ws "host:port"` | Override the Mixing Station WebSocket URL for this session only (not saved) |
-| `--interval <ms>` | Override the metering interval (30-1000ms) for this session only (not saved) |
-| `--log` | Enable JSON debug logging for this session |
-| `--verbose` | Print bridge logs to the launching Terminal (unchanged, existing flag) |
+| `--lang <code>` | Override the UI language for this launch only (e.g. `--lang cs`) — doesn't overwrite your saved language preference |
+| `--preset <name>` | Load a saved preset by name (case-insensitive) before applying any other flag below |
+| `--ws <url>` | Override the Mixing Station WebSocket URL for this launch (`ws://`/`wss://` prefix added automatically if omitted) |
+| `--interval <ms>` | Override the metering interval for this launch (clamped to 30–1000ms) |
+| `--log` | Enable JSON WS/MIDI logging for this launch |
+| `--start` | Start the bridge automatically once the GUI has finished loading |
+| `--stop` | Stop the bridge automatically once the GUI has finished loading (a no-op on a fresh launch, since nothing is running yet) |
 
-Only one GUI instance runs at a time. Launching again with flags (e.g. from a shell script or
-`open -a "Softube Console 1 MS Bridge" --args --stop`) forwards those flags to the already-running
-instance instead of opening a second window.
-
-`--start` and `--stop` together are treated as a mistake and both are ignored (a warning is logged).
+`--start` and `--stop` given together cancel each other out (neither applies). `--preset`,
+`--ws`, `--interval`, and `--log` are applied on top of the loaded preset (or the existing
+config, if no preset matched), then `--start`/`--stop` runs last — a failed `--preset` load
+suppresses `--start` so the bridge doesn't launch against an unintended config.
 
 ## What it supports
 
 - Track layout with custom ordering (inputs + buses + main), banked 10-wide for Console 1
 - Track state mirroring: name/color, fader, mute, solo, pan, selection
 - Sends mode: selecting a Bus master temporarily maps mute/pan to the chosen bus send
-- Metering: Console 1 active meter requests → Mixing Station `metering2`
+- Metering: Console 1 active meter requests → Mixing Station `metering2` (hardware-verified)
 - Stability features: reconnect + init buffering + batching to avoid WS/SysEx spam
 
 Note: Bus master solo is intentionally ignored (both directions), to avoid surprising “solo the whole bus” behavior.
 
 ## Building the desktop app
 
-Build a standalone app for your platform with `electron-builder`:
+Build a standalone app for your platform with the Tauri CLI:
 
 1. Install deps:
 
-  `npm install`
+   `npm install`
 
 2. Build for your platform:
 
-| Platform | Command | Artifacts |
-|---|---|---|
-| macOS | `npm run build:mac` | `.dmg`, `.zip` (x64 + arm64) |
-| Windows | `npm run build:win` | portable `.exe` (x64) |
+   `npm run tauri build`
 
-Artifacts are written to `dist/`.
+Tauri writes platform-native bundles (`.app`/`.dmg` on macOS, `.exe`/`.msi` on Windows) under
+`src-tauri/target/release/bundle/`. See the [Tauri distribution docs](https://tauri.app/distribute/)
+for the exact artifact set on your platform.
 
 ## Localization
 
-The GUI is translatable — English (`app/locales/en.json`) and Czech (`app/locales/cs.json`)
-ship today. Every static string in `app/renderer/index.html` is marked with a `data-i18n*`
-attribute; `applyI18n()` in `app/renderer/renderer.js` walks the DOM at startup (and again on
-every language switch) and fills them in from the active locale. Dynamic strings (button/status
-text set from JS) go through the `t(key, vars?)` helper the same way.
-
-A language selector lives at the bottom of the sidebar. Switching it takes effect immediately —
-no restart needed — and the choice is remembered for next launch. On first launch (before any
-choice is saved), the locale is picked from the OS's language (falling back to English for
-anything unrecognized).
+The GUI is translatable — English (`src/locales/en.json`) and Czech (`src/locales/cs.json`) ship
+today. A gear icon in the topbar opens a settings popover with the language selector; switching it
+takes effect immediately — no restart needed — and the choice is remembered (via `localStorage`)
+for next launch. First launch (before any choice is saved) defaults to English; use `--lang <code>`
+(see [Command-line arguments](#command-line-arguments)) to override it for one session without
+changing the saved preference.
 
 To add a language:
 
-1. Copy `app/locales/en.json` to `app/locales/<code>.json` (e.g. `de.json`) and translate the
+1. Copy `src/locales/en.json` to `src/locales/<code>.json` (e.g. `de.json`) and translate the
    values — keep the keys and any `{placeholder}` tokens exactly as-is. Set `meta.localeName`
    to how the language should read in its own selector entry (e.g. `"Deutsch"`, not `"German"`).
-2. A partial translation is fine: `app/i18n.js`'s `loadLocaleStrings()` merges it over the
-   English fallback, so an untranslated key just shows English rather than breaking.
-3. The new locale shows up in the sidebar's language selector automatically — no other code
-   changes needed.
+2. Register the new locale in `src/lib/i18n.svelte.ts`'s `locales` map.
+3. The new locale then shows up in the settings popover's language selector automatically.
 
-The bridge process (`index.js`)'s own console output is a technical/debug log, not user-facing
-UI, and is intentionally out of scope — it stays English-only, same as most server/daemon logs.
+The bridge's own console/log output is technical/debug text, not user-facing UI, and is
+intentionally out of scope — it stays English-only, same as most server/daemon logs.
 
 ## Track layout (banks + ordering)
 
 Console 1 Fader Mk III has 10 faders, so the bridge builds 10-wide banks.
 
-- Input banks: based on `INPUT_TRACK_ORDER` (supports stereo groups).
-- Bus banks: based on `BUS_TRACK_ORDER` (supports stereo groups).
+- Input banks: based on `inputTrackOrder` (supports stereo groups).
+- Bus banks: based on `busTrackOrder` (supports stereo groups).
 - Main: placed only once (10th fader on the last bus bank).
 
 Stereo groups are expressed as `[left, right]` pairs inside the order arrays. For these grouped stereo tracks:
@@ -155,16 +143,18 @@ Stereo groups are expressed as `[left, right]` pairs inside the order arrays. Fo
 - Pan is locked (Console 1 pan changes are ignored)
 - Displayed pan is forced to center
 
-Edit these constants in [index.js](index.js) to match your mixer/project layout:
+Edit these in the GUI's **Track Layout** tab (drag-and-drop reordering + stereo linking), or
+directly in `bridge-config.json`:
 
-- `INPUT_TRACK_ORDER`
-- `BUS_TRACK_ORDER`
+- `inputTrackOrder`
+- `busTrackOrder`
 
-Also note the channel ranges the bridge assumes:
+Channel ranges are auto-detected from Mixing Station on connect (via `/console/information`),
+falling back to these defaults if unavailable:
 
-- Inputs: `ch.0 .. ch.31` (`INPUT_CHANNEL_COUNT = 32`)
-- Buses: `ch.48 .. ch.63` (`BUS_CHANNEL_START = 48`, `BUS_CHANNEL_COUNT = 16`)
-- Main stereo: `ch.70 + ch.71` (`MAIN_STEREO_CHANNELS = [70, 71]`)
+- Inputs: `ch.0 .. ch.31` (32 inputs)
+- Buses: `ch.48 .. ch.63` (16 buses)
+- Main stereo: `ch.70 + ch.71`
 
 ## Sends
 
@@ -172,10 +162,10 @@ Console 1 exposes 6 send slots, while Mixing Station can have up to 16 bus sends
 
 ### Send slot mapping
 
-Edit `C1_SEND_TO_MS_BUS_NUMBER` in [index.js](index.js):
+Edit `c1SendToMsBusNumber` in `bridge-config.json`, or the GUI's **Sends & Colors** tab:
 
 - It maps Console 1 send slots (1..6) to Mixing Station bus numbers (1..16)
-- Example in the current code: `Send4 → Bus7`, `Send5 → Bus9`, `Send6 → Bus13`
+- Example: `Send4 → Bus7`, `Send5 → Bus9`, `Send6 → Bus13`
 
 This mapping controls how Console 1 `send1..send6` and `send1On..send6On` are written to Mixing Station:
 
@@ -207,53 +197,73 @@ It converts dB values into Console 1’s expected 0..1 peak-like meter value.
 
 ## Bridge lifecycle (GUI mode)
 
-When run via the GUI, the bridge process is spawned once when the GUI launches and stays alive
-(holding the Console 1 Fader MIDI connection) until the GUI quits — it no longer restarts on every
-Start/Stop. Start/Stop instead toggle between two states, both controlled from the GUI's Start/Stop
-button:
+When run via the GUI, the bridge runs as an in-process background task started when the app
+launches and stays alive (holding the Console 1 Fader MIDI connection) for the life of the app —
+it doesn't restart on every Start/Stop. Start/Stop instead toggle between two states:
 
-- **Standby**: Console 1 Fader connected, no Mixing Station connection.
-- **Running**: full bridging active.
+- **Standby**: Console 1 Fader connected, a fixed status bank (bank 0) shown on the fader, no
+  Mixing Station connection.
+- **Running**: full bridging active, plus the status bank continues to be shown.
+
+The 7 status slots (iPad, SPD-SX PRO, MIDI Maestro, Bome MIDI Translator Pro, Mixing Station,
+Console 1 On-Screen Display, Ableton Live 12 Suite) show green when present, red when not —
+mirroring the GUI's own topbar dots — and update live in either lifecycle state, roughly every 2
+seconds.
+
+The status bank's 10th slot doubles as a physical Start/Stop button — pressing it while in standby
+starts the bridge (using whatever config is currently loaded in the GUI), pressing it while running
+stops it. It shows "Start" (orange) or "Stop" (red) accordingly.
 
 ## Shutdown behavior
 
-On `SIGINT`/`SIGTERM` (Ctrl+C):
+On closing the GUI window, or on Ctrl+C (SIGINT) or `SIGTERM` (a plain `kill <pid>`) in either
+binary:
 
 - Sends a Console 1 `RESET`
 - Deactivates all tracks on Console 1
 - Closes MIDI ports and the WebSocket
 
+`SIGTERM` handling is macOS/Linux-only — Windows has no equivalent signal a process can trap, so
+`kill`-style termination there still ends the process immediately.
+
 ## Troubleshooting
 
 - “MIDI port not found”:
   - The bridge looks for ports containing `Console 1 Fader Mk III DAW`.
-  - If your system reports a different name, adjust the `preferredNames` defaults in `openSoftubeMidiInput()` / `openSoftubeMidiOutput()` in [index.js](index.js).
+  - If your system reports a different name, adjust `DEFAULT_PREFERRED_PORT_NAMES` in
+    [`crates/bridge-core/src/midi_io.rs`](crates/bridge-core/src/midi_io.rs).
 
 - WebSocket won’t connect:
   - Verify Mixing Station WebSocket API is enabled.
-  - Check `MIXING_STATION_WS_URL` and network/firewall settings.
+  - Check `mixingStationWsUrl` in `bridge-config.json` (or the GUI's Connection tab) and
+    network/firewall settings.
 
 - Can’t exit sends mode:
   - Main is only placed once (10th fader on the last bus bank). Select Main to return to standard mode.
 
 - Need more visibility:
-  - Set `LOG_JSON = true` in [index.js](index.js) to log WS/MIDI JSON payloads.
-  - Set `LOG_METERING = true` in [index.js](index.js) to log metering parsing + subscription details.
+  - Set `logJson: true` in `bridge-config.json` (or toggle it in the GUI's Connection tab) to log
+    WS/MIDI JSON payloads. There's currently no separate metering-only debug log level (JS's old
+    `LOG_METERING` toggle hasn't been ported).
 
-- A topbar status dot (Mixing Station/Console 1 On-Screen Display) never turns green despite the
-  app being present:
-  - The match string in [app/statusMonitor.js](app/statusMonitor.js) likely doesn't match what
-    your system actually reports. Check the exact process name via `ps -Ao args= | grep -i <app
-    name>`, and adjust the corresponding string in `computeStatus()`.
+- A topbar status dot (iPad/SPD-SX PRO/MIDI Maestro/Bome MIDI Translator Pro/Mixing
+  Station/Console 1 On-Screen Display/Ableton Live 12 Suite) never turns green despite the
+  device/app being present:
+  - The match string in [`src-tauri/src/status_gather.rs`](src-tauri/src/status_gather.rs) likely
+    doesn't match what your system actually reports. Check the exact MIDI port name in Audio MIDI
+    Setup, or the exact process name via `ps -Ao args= | grep -i <app name>`, and adjust the
+    corresponding match string there.
 
-- Clicking Start does nothing:
-  - Confirm the GUI window is open (the bridge process only exists while the GUI is running).
-  - If you click Start within a second or two of launching the app, the bridge may not have found
-    the Console 1 Fader yet — the GUI's status badge can briefly show "Running" even though the
-    bridge itself logged an "Ignoring lifecycle:start" warning and stayed in standby. Check the
-    GUI's log panel for `[Lifecycle]`-prefixed lines confirming the bridge found the Console 1
-    Fader port before pressing Start. The same applies if the bridge process ever crashes and gets
-    re-spawned: the very next Start click can race the fresh process's MIDI detection the same way.
+- The status/Start bank never appears on the physical Console1 Fader:
+  - Check the GUI's log panel for `[Lifecycle]`-prefixed lines confirming the bridge found the
+    Console 1 Fader port — if it's still logged as waiting, the port isn't being detected (see the
+    "MIDI port not found" entry above).
+
+- Pressing the hardware Start/Stop slot does nothing:
+  - Confirm the GUI window is open (the bridge only runs while the GUI is running).
+  - If you click Start (or press the hardware slot) within a second or two of launching the app,
+    the bridge may not have found the Console 1 Fader yet — wait for the Console 1 Fader's status
+    bank to appear before pressing Start.
 
 ## Support
 
