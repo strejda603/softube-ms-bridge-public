@@ -1,0 +1,9 @@
+[package]
+name = "bridge-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bridge-core = { path = "../bridge-core" }
+bridge-config = { path = "../bridge-config" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
