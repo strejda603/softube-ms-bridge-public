@@ -155,8 +155,8 @@ pub fn create_default_track_for_slot(
 ) -> TrackInfo {
     let mut is_active = true;
     let mut color = 6842214u32;
-    let mut name = default_name_for_slot(slot, bus_channel_start);
-    let mut send_on = [false; 6];
+    let name = default_name_for_slot(slot, bus_channel_start);
+    let send_on = [false; 6];
 
     match slot.kind {
         LayoutSlotKind::Bus => color = colors.bus_color,
