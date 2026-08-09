@@ -54,7 +54,6 @@ use crate::track_cache::{DefaultTrackColors, TrackCache, TrackInfo};
 use crate::track_layout::{
     build_track_layout, object_ids_by_ms_channel, LayoutSlot, LayoutSlotKind, TrackLayoutParams,
 };
-use crate::status_monitor::StatusSnapshot;
 use crate::update_queue::UpdateQueue;
 use crate::value_coercion::trim_stereo_suffix_from_name;
 use crate::ws_engine::{spawn_ws_engine, WsCommand, WsEngineHandle, WsEvent, WS_RECONNECT_DELAY};
@@ -1658,6 +1657,9 @@ fn handle_control_message(
             state.has_sent_initial_track_dump = false;
             true
         }
+        // No-op pending Task 7 removing this variant entirely -- there's no status bank left
+        // to reaffirm.
+        ControlAction::ReaffirmStatusBank => false,
     }
 }
 
@@ -2125,7 +2127,6 @@ pub fn spawn_bridge_runtime(initial_config: RuntimeConfig) -> BridgeRuntimeHandl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update_queue::QueuedUpdate;
     use bridge_config::TrackOrderEntry;
 
     /// A throwaway event sender for tests that don't assert on emitted events. The receiver is
@@ -2170,7 +2171,7 @@ mod tests {
     /// `send_sysex_and_log`'s own tests above only prove the choke point's internal branching
     /// on a literal `true`/`false` -- they say nothing about whether `state.config.log_json`
     /// actually reaches it from any real call site. This proves the wiring end-to-end through
-    /// one representative migrated call site (`send_status_bank_tracks`): with
+    /// one representative call site (`handle_control_message(ResendHandshake, ...)`): with
     /// `state.config.log_json` set on live `BridgeState`, a real higher-level send must still
     /// produce the `LOG_JSON` log line, not just an unconditional SysEx send.
     #[test]
@@ -2180,7 +2181,7 @@ mod tests {
         let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<BridgeEvent>();
 
-        send_status_bank_tracks(&mut state, &midi_tx, &event_tx);
+        let _ = handle_control_message(ControlAction::ResendHandshake, &mut state, &midi_tx, &event_tx);
 
         let mut saw_sysex_log = false;
         while let Ok(event) = event_rx.try_recv() {
@@ -2194,8 +2195,9 @@ mod tests {
         assert!(
             saw_sysex_log,
             "expected state.config.log_json = true to produce a 'Sending SysEx JSON to \
-             Console 1:' log line via send_status_bank_tracks -- if this fails, log_json \
-             stopped flowing from BridgeState into send_sysex_and_log at this call site"
+             Console 1:' log line via handle_control_message(ResendHandshake) -- if this \
+             fails, log_json stopped flowing from BridgeState into send_sysex_and_log at \
+             this call site"
         );
     }
 
@@ -2507,9 +2509,8 @@ mod tests {
     fn update_metering2_subscription_updates_param_channels_when_connected() {
         let mut state = running_state_without_ws_engine();
         state.ws_connected = true;
-        // Object ID 10 is the first real Input slot in the default layout (object IDs 0..=9
-        // are the fixed status/Start bank -- see `START_SLOT_OBJECT_ID`), MS channel 0.
-        state.metered_object_ids = [10].into_iter().collect();
+        // Object ID 0 is the first real Input slot in the default layout, MS channel 0.
+        state.metered_object_ids = [0].into_iter().collect();
         update_metering2_subscription(&mut state);
         assert_eq!(state.metering2_param_ms_channels, vec![0]);
     }
@@ -2622,9 +2623,9 @@ mod tests {
     fn metering2_push_is_ignored_when_subscription_id_does_not_match() {
         let mut state = running_state_without_ws_engine();
         state.ws_connected = true;
-        let slot = state.layout[10].clone();
-        clone_or_create_track(&mut state, 10, &slot);
-        state.metered_object_ids = [10].into_iter().collect();
+        let slot = state.layout[0].clone();
+        clone_or_create_track(&mut state, 0, &slot);
+        state.metered_object_ids = [0].into_iter().collect();
         update_metering2_subscription(&mut state);
         assert_eq!(state.metering2_param_ms_channels, vec![0]);
 
@@ -2642,14 +2643,14 @@ mod tests {
     fn metering2_push_updates_meter_db_cache_and_queues_a_meter_update() {
         let mut state = running_state_without_ws_engine();
         state.ws_connected = true;
-        let slot = state.layout[10].clone(); // object_id 10, an Input slot, MS channel 0
-        let track = clone_or_create_track(&mut state, 10, &slot);
+        let slot = state.layout[0].clone(); // object_id 0, an Input slot, MS channel 0
+        let track = clone_or_create_track(&mut state, 0, &slot);
         assert!(track.is_active);
         let track_id = track.track_id.clone();
 
-        // Subscribe to object_id 10 first, so metering2_param_ms_channels/object_ids_by_ms_channel
+        // Subscribe to object_id 0 first, so metering2_param_ms_channels/object_ids_by_ms_channel
         // line up the way a real activeMeters message would have set them up.
-        state.metered_object_ids = [10].into_iter().collect();
+        state.metered_object_ids = [0].into_iter().collect();
         update_metering2_subscription(&mut state);
         assert_eq!(state.metering2_param_ms_channels, vec![0]);
 
@@ -2718,12 +2719,12 @@ mod tests {
 
         let mut state = running_state_without_ws_engine();
         state.ws_connected = true;
-        let slot = state.layout[10].clone(); // object_id 10, an Input slot, MS channel 0
-        let track = clone_or_create_track(&mut state, 10, &slot);
+        let slot = state.layout[0].clone(); // object_id 0, an Input slot, MS channel 0
+        let track = clone_or_create_track(&mut state, 0, &slot);
         assert!(track.is_active);
         let track_id = track.track_id.clone();
 
-        state.metered_object_ids = [10].into_iter().collect();
+        state.metered_object_ids = [0].into_iter().collect();
         update_metering2_subscription(&mut state);
         assert_eq!(state.metering2_param_ms_channels, vec![0]);
 
@@ -2784,14 +2785,14 @@ mod tests {
         let mut state = running_state_without_ws_engine();
         state.ws_connected = true;
 
-        // object_id 10 -> MS channel 0, object_id 11 -> MS channel 1 (the first two real Input
-        // slots after the fixed status/Start bank, which ends at START_SLOT_OBJECT_ID == 9).
-        let slot_a = state.layout[10].clone();
-        let slot_b = state.layout[11].clone();
-        clone_or_create_track(&mut state, 10, &slot_a);
-        clone_or_create_track(&mut state, 11, &slot_b);
+        // object_id 0 -> MS channel 0, object_id 1 -> MS channel 1 (the first two real Input
+        // slots in the default layout).
+        let slot_a = state.layout[0].clone();
+        let slot_b = state.layout[1].clone();
+        clone_or_create_track(&mut state, 0, &slot_a);
+        clone_or_create_track(&mut state, 1, &slot_b);
 
-        state.metered_object_ids = [10, 11].into_iter().collect();
+        state.metered_object_ids = [0, 1].into_iter().collect();
         update_metering2_subscription(&mut state);
         // Confirm the subscription really has 2 channels, in ascending sorted order (per
         // build_metering2_subscribe_body's doc comment), before relying on positional pairing.
@@ -2814,9 +2815,9 @@ mod tests {
         // still be the default -- read it back via state.track_cache.get(object_id) rather than
         // through clone_or_create_track (which would just create a fresh default if the write
         // never happened, silently passing the assertion for the wrong reason).
-        let track_a = state.track_cache.get(10).expect("track was created earlier");
+        let track_a = state.track_cache.get(0).expect("track was created earlier");
         assert_ne!(track_a.meter, vec![0.0], "meter must have been persisted via store_track");
-        let track_b = state.track_cache.get(11).expect("track was created earlier");
+        let track_b = state.track_cache.get(1).expect("track was created earlier");
         assert_ne!(track_b.meter, vec![0.0], "meter must have been persisted via store_track");
     }
 
@@ -2835,15 +2836,11 @@ mod tests {
         rebuild_layout_and_reset_caches(&mut state);
 
         assert_eq!(state.bus_channel_start, 24);
-        // 8 inputs + 4 buses + Main + the fixed 10-slot status/Start bank is a very different
-        // slot count than the default (32 inputs + 16 buses + Main + status/Start bank) --
-        // proves build_default_layout genuinely used the new architecture, not the old one.
+        // 8 inputs + 4 buses + Main is a very different slot count than the default (32
+        // inputs + 16 buses + Main) -- proves build_default_layout genuinely used the new
+        // architecture, not the old one.
         assert_ne!(state.layout.len(), original_layout_len);
-        assert!(state
-            .object_ids_by_ms_channel
-            .values()
-            .flatten()
-            .any(|&object_id| object_id > START_SLOT_OBJECT_ID));
+        assert!(!state.object_ids_by_ms_channel.is_empty());
     }
 
     #[test]
@@ -3115,231 +3112,6 @@ mod tests {
         assert!(requested_channels.contains(&1));
     }
 
-    /// The Start slot's own `selected:false` is not enough to clear Console 1's selection latch
-    /// on real hardware — a *different* object has to be selected. Both halves must survive
-    /// `enter_standby_state`, which drains the update queue partway through this same call.
-    #[test]
-    fn start_slot_trigger_unlatches_by_also_force_selecting_a_neighbor() {
-        let mut state = running_state_without_ws_engine();
-        let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        send_status_bank_tracks(&mut state, &midi_tx, &event_tx);
-
-        let start_track_id = state
-            .track_cache
-            .get(START_SLOT_OBJECT_ID)
-            .unwrap()
-            .track_id
-            .clone();
-        let neighbor_object_id = START_SLOT_OBJECT_ID - 2;
-        let neighbor_track_id = state
-            .track_cache
-            .get(neighbor_object_id)
-            .unwrap()
-            .track_id
-            .clone();
-
-        let frame = build_sysex_frame(&json!({"trackId": start_track_id, "selected": true}));
-        handle_inbound_midi_message(&frame, &mut state, &midi_tx, &event_tx);
-
-        assert_eq!(state.lifecycle, Lifecycle::Standby);
-        assert!(
-            !state
-                .track_cache
-                .get(START_SLOT_OBJECT_ID)
-                .unwrap()
-                .selected
-        );
-        assert!(state.track_cache.get(neighbor_object_id).unwrap().selected);
-
-        let forced: HashMap<String, QueuedUpdate> =
-            state.update_queue.take_forced().into_iter().collect();
-        assert_eq!(forced[&start_track_id].fields["selected"], json!(false));
-        assert_eq!(forced[&neighbor_track_id].fields["selected"], json!(true));
-    }
-
-    fn all_off_status_snapshot() -> StatusSnapshot {
-        StatusSnapshot {
-            ipad: false,
-            spd_sx_pro: false,
-            midi_maestro: false,
-            bome_mtp: false,
-            mixing_station: false,
-            console1_osd: false,
-            ableton_live: false,
-        }
-    }
-
-    #[test]
-    fn apply_live_status_colors_sends_on_color_for_a_true_indicator() {
-        let mut state = running_state_without_ws_engine();
-        let (midi_tx, midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        let mut snapshot = all_off_status_snapshot();
-        snapshot.ipad = true;
-
-        apply_live_status_colors(&mut state, &midi_tx, &snapshot, &event_tx);
-
-        let frame = midi_rx.try_recv().expect("expected a trackBatch send");
-        match frame {
-            MidiCommand::Send(bytes) => {
-                let value = parse_sysex_json(&bytes).expect("valid SysEx JSON frame");
-                let batch = value["trackBatch"].as_array().unwrap();
-                let ipad_track_id = state.track_cache.get(0).unwrap().track_id.clone();
-                let ipad_entry = batch
-                    .iter()
-                    .find(|e| e["trackId"] == json!(ipad_track_id))
-                    .expect("iPad slot should be in the batch");
-                assert_eq!(ipad_entry["color"], json!(0x00ff00));
-            }
-            // MidiCommand has no Debug impl -- match the only other variant explicitly
-            // instead of a Debug-requiring wildcard arm (same fix as the DSP-trackid plan).
-            MidiCommand::Shutdown => panic!("expected MidiCommand::Send, got Shutdown"),
-        }
-        assert_eq!(state.track_cache.get(0).unwrap().color, 0x00ff00);
-        assert!(midi_rx.try_recv().is_err(), "expected exactly one send");
-    }
-
-    #[test]
-    fn apply_live_status_colors_sends_off_color_for_a_false_indicator() {
-        let mut state = running_state_without_ws_engine();
-        let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        // Force the cached color away from the default off-color first, so the off-color
-        // branch has something real to correct rather than trivially matching the fresh
-        // create_default_track_for_slot default.
-        apply_live_status_colors(&mut state, &midi_tx, &{
-            let mut s = all_off_status_snapshot();
-            s.ipad = true;
-            s
-        }, &event_tx);
-        assert_eq!(state.track_cache.get(0).unwrap().color, 0x00ff00);
-
-        let (midi_tx2, midi_rx2) = std::sync::mpsc::channel();
-        apply_live_status_colors(&mut state, &midi_tx2, &all_off_status_snapshot(), &event_tx);
-
-        assert_eq!(state.track_cache.get(0).unwrap().color, 0x0000ff);
-        assert!(midi_rx2.try_recv().is_ok(), "expected a send correcting ipad back to off");
-    }
-
-    #[test]
-    fn apply_live_status_colors_is_a_no_op_when_nothing_changed() {
-        let mut state = running_state_without_ws_engine();
-        let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        let snapshot = all_off_status_snapshot();
-        // First call creates the slots at their default off-color, matching the snapshot --
-        // nothing should differ.
-        apply_live_status_colors(&mut state, &midi_tx, &snapshot, &event_tx);
-
-        let (midi_tx2, midi_rx2) = std::sync::mpsc::channel();
-        apply_live_status_colors(&mut state, &midi_tx2, &snapshot, &event_tx);
-
-        assert!(
-            midi_rx2.try_recv().is_err(),
-            "second call with an unchanged snapshot should send nothing"
-        );
-    }
-
-    #[test]
-    fn apply_live_status_colors_works_while_standby() {
-        let mut state = running_state_without_ws_engine();
-        state.lifecycle = Lifecycle::Standby;
-        let (midi_tx, midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        let mut snapshot = all_off_status_snapshot();
-        snapshot.mixing_station = true;
-
-        apply_live_status_colors(&mut state, &midi_tx, &snapshot, &event_tx);
-
-        assert!(midi_rx.try_recv().is_ok(), "must force-send in standby too, matching JS");
-    }
-
-    #[test]
-    fn apply_live_status_colors_only_touches_status_slots() {
-        let mut state = running_state_without_ws_engine();
-        let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        let mut snapshot = all_off_status_snapshot();
-        snapshot.ipad = true;
-
-        apply_live_status_colors(&mut state, &midi_tx, &snapshot, &event_tx);
-
-        // Bank 0 is object ids 0..=9, but only 7 of those 10 are Status-kind slots (ids 0-2
-        // and 4-7, per build_status_bank_slots_layout_and_indicator_order); ids 3 and 8 are
-        // Empty spacers and id 9 (START_SLOT_OBJECT_ID) is the Start slot. Asserting all three
-        // non-Status bank-0 slots -- plus the first real input slot at id 10 -- distinguishes
-        // "filtered by LayoutSlotKind::Status" from the coarser (and wrong) "filtered by
-        // object id <= 9".
-        assert!(state.track_cache.get(3).is_none(), "Empty spacer at id 3 must not be created");
-        assert!(state.track_cache.get(8).is_none(), "Empty spacer at id 8 must not be created");
-        assert!(
-            state.track_cache.get(START_SLOT_OBJECT_ID).is_none(),
-            "Start slot must not be created"
-        );
-        assert!(state.track_cache.get(10).is_none(), "first real input slot must not be created");
-    }
-
-    #[test]
-    fn apply_live_status_colors_batches_multiple_changed_slots_into_one_trackbatch_send() {
-        let mut state = running_state_without_ws_engine();
-        let (midi_tx, midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        let mut snapshot = all_off_status_snapshot();
-        snapshot.ipad = true;
-        snapshot.mixing_station = true;
-
-        apply_live_status_colors(&mut state, &midi_tx, &snapshot, &event_tx);
-
-        let frame = midi_rx.try_recv().expect("expected a trackBatch send");
-        let batch = match frame {
-            MidiCommand::Send(bytes) => {
-                let value = parse_sysex_json(&bytes).expect("valid SysEx JSON frame");
-                value["trackBatch"]
-                    .as_array()
-                    .expect("trackBatch is an array")
-                    .clone()
-            }
-            MidiCommand::Shutdown => panic!("expected MidiCommand::Send, got Shutdown"),
-        };
-        assert!(
-            midi_rx.try_recv().is_err(),
-            "both changed slots must be batched into a single trackBatch send, not two"
-        );
-
-        assert_eq!(
-            batch.len(),
-            2,
-            "trackBatch should contain exactly the 2 changed slots, got {batch:?}"
-        );
-
-        let ipad_track_id = state.track_cache.get(0).unwrap().track_id.clone();
-        let mixing_station_object_id = state
-            .layout
-            .iter()
-            .find(|s| matches!(s.kind, LayoutSlotKind::Status { key, .. } if key == "mixingStation"))
-            .unwrap()
-            .object_id;
-        let mixing_station_track_id = state
-            .track_cache
-            .get(mixing_station_object_id)
-            .unwrap()
-            .track_id
-            .clone();
-
-        let ipad_entry = batch
-            .iter()
-            .find(|e| e["trackId"] == json!(ipad_track_id))
-            .expect("ipad slot should be in the batch");
-        assert_eq!(ipad_entry["color"], json!(0x00ff00));
-
-        let mixing_station_entry = batch
-            .iter()
-            .find(|e| e["trackId"] == json!(mixing_station_track_id))
-            .expect("mixingStation slot should be in the batch");
-        assert_eq!(mixing_station_entry["color"], json!(0x00ff00));
-    }
-
     #[test]
     fn finalize_initialization_control_action_calls_the_real_function() {
         let mut state = running_state_without_ws_engine();
@@ -3608,49 +3380,23 @@ mod tests {
         ));
     }
 
-    /// Status-bank slots other than Start carry no meaning in this direction — and crucially
-    /// must not fall through into the real-track dispatch, which assumes an `ms_primary`.
     #[test]
-    fn non_start_status_slot_midi_message_is_ignored() {
-        let mut state = running_state_without_ws_engine();
-        let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-        send_status_bank_tracks(&mut state, &midi_tx, &event_tx);
-
-        let status_track_id = state.track_cache.get(0).unwrap().track_id.clone();
-        let frame = build_sysex_frame(&json!({"trackId": status_track_id, "selected": true}));
-        handle_inbound_midi_message(&frame, &mut state, &midi_tx, &event_tx);
-
-        assert_eq!(state.lifecycle, Lifecycle::Running);
-        assert!(state.update_queue.is_empty());
-        assert!(state.ms_write_queue.is_empty());
-    }
-
-    #[test]
-    fn ws_connect_drops_cached_real_channel_tracks_but_keeps_the_status_bank() {
+    fn ws_connect_drops_all_cached_tracks() {
         let mut state = running_state_without_ws_engine();
         let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
         let event_tx = discarding_event_tx();
 
-        let status_slot = state.layout[0].clone();
-        let real_slot = state
-            .layout
-            .iter()
-            .find(|s| s.object_id > START_SLOT_OBJECT_ID)
-            .cloned()
-            .expect("default layout has real channel slots");
+        let real_slot = state.layout[0].clone();
         let colors = default_colors(&state.config);
         let bus_channel_start = state.bus_channel_start;
-        for slot in [&status_slot, &real_slot] {
-            state.track_cache.get_or_create(
-                slot.object_id,
-                slot,
-                state.lifecycle,
-                &colors,
-                bus_channel_start,
-                &mut state.rng,
-            );
-        }
+        state.track_cache.get_or_create(
+            real_slot.object_id,
+            &real_slot,
+            state.lifecycle,
+            &colors,
+            bus_channel_start,
+            &mut state.rng,
+        );
 
         // handle_ws_connected only starts the /console/information race now; the actual cache
         // drop happens once finish_ws_connect runs (immediately here, simulating the timeout
@@ -3659,7 +3405,6 @@ mod tests {
         finish_ws_connect(&mut state, &midi_tx, &event_tx);
 
         assert!(state.track_cache.get(real_slot.object_id).is_none());
-        assert!(state.track_cache.get(status_slot.object_id).is_some());
         assert_eq!(state.sends_mode_ms_send_index, None);
     }
 
@@ -3941,29 +3686,6 @@ mod tests {
         assert!(arm_init_flush, "caller must arm the 500ms forced resync");
         assert!(state.is_initializing);
         assert!(!state.has_sent_initial_track_dump);
-    }
-
-    /// The hardware Start button reaches `enter_running_state` three levels down, so its arming
-    /// signal has to survive the whole dispatch chain — a Stop must not arm anything.
-    #[tokio::test]
-    async fn hardware_start_bubbles_the_forced_resync_request_up_to_the_event_loop() {
-        let mut state = running_state_without_ws_engine();
-        state.lifecycle = Lifecycle::Standby;
-        let (midi_tx, _midi_rx) = std::sync::mpsc::channel();
-        let event_tx = discarding_event_tx();
-
-        assert!(handle_hardware_trigger(
-            HardwareTrigger::Start,
-            &mut state,
-            &midi_tx,
-            &event_tx
-        ));
-        assert!(!handle_hardware_trigger(
-            HardwareTrigger::Stop,
-            &mut state,
-            &midi_tx,
-            &event_tx
-        ));
     }
 
     /// The lifecycle transitions emit both a human-readable log line and the structured

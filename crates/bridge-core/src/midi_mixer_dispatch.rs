@@ -493,10 +493,6 @@ mod tests {
         DefaultTrackColors {
             bus_color: 0x00a5ff,
             main_color: 0x00a5ff,
-            status_off_color: 0x333333,
-            status_on_color: 0x00ff00,
-            start_color: 0x00a5ff,
-            stop_color: 0x999999,
         }
     }
 
