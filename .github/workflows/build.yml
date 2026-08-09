@@ -42,23 +42,28 @@ jobs:
 
       # Tauri's bundler only produces installers (msi/nsis) on Windows -- no portable/standalone
       # target exists. The raw compiled binary needs no install step to run (only the WebView2
-      # runtime, which ships with Windows 10/11 by default), so it's uploaded as-is, renamed for
-      # clarity, as an extra release asset alongside the installer.
+      # runtime, which ships with Windows 10/11 by default), so it's uploaded as-is, renamed to
+      # match the installer assets' own naming (`${productName}_${version}_x64-setup.exe`
+      # convention), as an extra release asset alongside the installer.
       #
       # Path is target\release\, not src-tauri\target\release\ -- this repo's root Cargo.toml
       # declares a [workspace] with src-tauri as a member, so cargo puts build output in the
       # workspace root's target dir regardless of which member crate is built.
       - name: Prepare portable exe (Windows only)
         if: matrix.platform == 'windows-latest'
-        shell: cmd
-        run: copy target\release\bridge-tauri.exe softube-console1-ms-bridge-portable.exe
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $dest = "Softube Console 1 MS Bridge_${version}_x64-portable.exe"
+          Copy-Item target/release/bridge-tauri.exe $dest
+          echo "PORTABLE_EXE_NAME=$dest" >> $env:GITHUB_ENV
 
       - name: Upload portable exe (Windows only)
         if: matrix.platform == 'windows-latest'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          files: softube-console1-ms-bridge-portable.exe
+          files: ${{ env.PORTABLE_EXE_NAME }}
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
