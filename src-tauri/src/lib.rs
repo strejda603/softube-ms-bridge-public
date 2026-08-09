@@ -5,7 +5,7 @@ mod presets;
 mod status_gather;
 
 use bridge_config::{BridgeConfigPatch, RuntimeConfig};
-use bridge_core::console1_status_bank::Lifecycle;
+use bridge_core::lifecycle::Lifecycle;
 use bridge_core::runtime::{spawn_bridge_runtime, BridgeCommand, BridgeEvent};
 use bridge_core::status_monitor::StatusSnapshot;
 use std::sync::{Arc, Mutex};
@@ -479,14 +479,6 @@ pub fn run() {
                 status_gather::run_status_poll_loop(move |snapshot| {
                     *status_state_for_thread.lock().unwrap() = Some(snapshot);
                     let _ = status_app_handle.emit("status://update", &snapshot);
-                    // Push the same snapshot onto the Console 1 hardware's own status-bank
-                    // LEDs. AppState is managed asynchronously in setup(), same narrow
-                    // startup-window race as the window-close handler above -- try_state()
-                    // degrades gracefully (skip this tick) instead of panicking if a snapshot
-                    // lands before it's managed.
-                    if let Some(state) = status_app_handle.try_state::<AppState>() {
-                        let _ = state.command_tx.send(BridgeCommand::StatusUpdate(snapshot));
-                    }
                 });
             });
 
