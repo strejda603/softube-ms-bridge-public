@@ -14,10 +14,10 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
 
 /// Lists every currently-running process's full command line (joined argv, mirroring `ps -Ao
 /// args=`'s one-line-per-process format). `sysinfo::Process::name()` (bare executable
-/// basename) is deliberately NOT used: verified empirically that neither of
-/// `compute_status`'s 2 process-detection needles match against executable basenames -- only
-/// the full joined command line reliably contains the needle, via the `.app` bundle path
-/// component of argv[0]. Refreshes only `cmd` on the given long-lived `System` (not a fresh
+/// basename) is deliberately NOT used: `console1_osd`'s needle only matches a path component of
+/// the full command line (the `.app` bundle name on macOS), not any executable basename, so the
+/// full joined command line is needed regardless of what `mixing_station`'s needle happens to
+/// match against. Refreshes only `cmd` on the given long-lived `System` (not a fresh
 /// `new_all()` each call) -- see the module doc for why this is both cheaper and no less
 /// fresh.
 fn gather_process_command_lines(sys: &mut sysinfo::System) -> Vec<String> {

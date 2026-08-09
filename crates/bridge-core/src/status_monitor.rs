@@ -25,16 +25,24 @@ pub struct StatusSnapshot {
 ///
 /// `process_command_lines` must be FULL command lines (`ps -Ao args=`-style: the full
 /// executable path plus any arguments, one string per process), not bare executable/process
-/// names. Both needles below only appear in the `.app` bundle path component of the
-/// invocation -- the actual executable basenames don't contain them at all (verified against
-/// real installed app bundles: e.g. Mixing Station's real executable is just named
-/// "mixing-station"). A gatherer that passes basenames instead of full command lines will
-/// silently produce `false` for both dots with no test failure to catch it.
+/// names -- some needles below only appear in a path component of the invocation, not in the
+/// bare executable name.
+///
+/// `mixing_station`'s needle is the executable basename itself ("mixing-station"), not a
+/// display/bundle name -- confirmed via real installs on both platforms: macOS's `.app` bundle
+/// wraps an executable also literally named "mixing-station"
+/// (`.../Mixing Station.app/Contents/MacOS/mixing-station`), and Windows' real executable is
+/// `mixing-station-pc.exe` (confirmed via `Get-CimInstance Win32_Process` against a real
+/// Windows 11 install: `C:\Users\<user>\AppData\Local\mixing-station-pc\mixing-station-pc.exe`).
+/// An earlier version of this needle was "Mixing Station" (capitalized, with a space) -- that
+/// only ever matched the macOS `.app` bundle's *display* name, which was verified against a real
+/// macOS install but never against a real Windows one; on Windows it silently never matched
+/// anything, leaving the topbar dot permanently red despite Mixing Station actually running.
 pub fn compute_status(process_command_lines: &[String]) -> StatusSnapshot {
     let has_process = |needle: &str| process_command_lines.iter().any(|n| n.contains(needle));
 
     StatusSnapshot {
-        mixing_station: has_process("Mixing Station"),
+        mixing_station: has_process("mixing-station"),
         console1_osd: has_process("Softube On-Screen Display"),
     }
 }
@@ -60,9 +68,23 @@ mod tests {
 
     #[test]
     fn matching_is_case_sensitive() {
-        let processes = names(&["/applications/mixing station.app/contents/macos/mixing-station"]); // lowercase, doesn't match "Mixing Station"
+        let processes = names(&["/Applications/Mixing Station.app/Contents/MacOS/MIXING-STATION"]); // wrong case on the matched basename itself
         let snap = compute_status(&processes);
         assert!(!snap.mixing_station);
+    }
+
+    /// Regression test for a real bug: the needle used to be "Mixing Station" (the macOS `.app`
+    /// bundle's display name), which was verified against a real macOS install but never a real
+    /// Windows one -- it silently never matched on Windows, leaving the topbar dot permanently
+    /// red despite Mixing Station actually running. Fixture is the exact real command line from
+    /// `Get-CimInstance Win32_Process` against a real Windows 11 install.
+    #[test]
+    fn windows_mixing_station_process_is_detected() {
+        let processes = names(&[
+            r"C:\Users\danielpitra\AppData\Local\mixing-station-pc\mixing-station-pc.exe",
+        ]);
+        let snap = compute_status(&processes);
+        assert!(snap.mixing_station);
     }
 
     #[test]
