@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import { getLocale, listLocales, setLocale, t } from "./i18n.svelte";
-  import type { Lifecycle, StatusSnapshot } from "./ipc";
+  import * as ipc from "./ipc";
+  import type { Lifecycle, StatusSnapshot, UpdateCheckResult } from "./ipc";
   import brandIcon from "../assets/icon.png";
 
   let {
@@ -34,6 +35,56 @@
   let showSettings = $state(false);
   let appVersion: string | null = $state(null);
   let settingsRef: HTMLDivElement | undefined = $state();
+  let lastUpdateInfo: UpdateCheckResult | null = $state(null);
+  let updateDismissedThisSession = $state(false);
+  let updateStatusMessage: string | null = $state(null);
+  let updateStatusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Silent on-launch check -- any failure is swallowed, matching the original's "no user-visible
+   * feedback for the automatic check" behavior; only the manual button surfaces errors. */
+  async function checkForUpdateSilently() {
+    try {
+      const result = await ipc.checkForUpdate();
+      if (result.available) {
+        lastUpdateInfo = result;
+      }
+    } catch {
+      // Swallowed -- see doc comment above.
+    }
+  }
+
+  /** Shows a transient status message, auto-clearing after 4 seconds -- matches the original's
+   * behavior for the manual "Check for Updates" button's up-to-date/error feedback. */
+  function showUpdateStatusMessage(key: string) {
+    updateStatusMessage = t(key);
+    clearTimeout(updateStatusTimer);
+    updateStatusTimer = setTimeout(() => {
+      updateStatusMessage = null;
+    }, 4000);
+  }
+
+  async function handleCheckForUpdate() {
+    updateDismissedThisSession = false;
+    try {
+      const result = await ipc.checkForUpdate();
+      if (result.available) {
+        lastUpdateInfo = result;
+        return;
+      }
+      showUpdateStatusMessage(result.error ? "update.checkFailed" : "update.upToDate");
+    } catch {
+      showUpdateStatusMessage("update.checkFailed");
+    }
+  }
+
+  function handleDownload() {
+    if (!lastUpdateInfo) return;
+    void ipc.openDownload(lastUpdateInfo.downloadUrl ?? lastUpdateInfo.releaseUrl ?? "");
+  }
+
+  function handleDismissUpdate() {
+    updateDismissedThisSession = true;
+  }
 
   onMount(() => {
     getVersion()
@@ -43,6 +94,7 @@
       .catch(() => {
         // Inert display-only info -- leave appVersion null, the popover simply omits the line.
       });
+    checkForUpdateSilently();
   });
 
   // Closes the popover on an outside click or Escape. Only listens while open, matching this
@@ -174,6 +226,25 @@
           </select>
           {#if appVersion}
             <div class="popover-version">{t("footer.version", { version: appVersion })}</div>
+          {/if}
+          <div class="popover-row">
+            <button class="btn" onclick={handleCheckForUpdate}>{t("update.checkButton")}</button>
+          </div>
+          {#if updateStatusMessage}
+            <div class="popover-update-status">{updateStatusMessage}</div>
+          {/if}
+          {#if lastUpdateInfo?.available && !updateDismissedThisSession}
+            <div class="popover-update-pill">
+              <span>{t("update.available", { version: lastUpdateInfo.latestVersion ?? "" })}</span>
+              <button class="btn primary" onclick={handleDownload}>{t("update.download")}</button>
+              <button
+                class="btn icon-btn"
+                aria-label={t("update.dismiss")}
+                onclick={handleDismissUpdate}
+              >
+                ×
+              </button>
+            </div>
           {/if}
         </div>
       {/if}
@@ -336,5 +407,16 @@
     color: var(--text-muted);
     border-top: 1px solid var(--border);
     padding-top: 0.5rem;
+  }
+  .popover-update-status {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+  .popover-update-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    flex-wrap: wrap;
   }
 </style>

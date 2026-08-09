@@ -28,6 +28,12 @@
   "topbar.stop": "Stop",
   "kofi.button": "Podpořit",
   "kofi.title": "Podpořit na Ko-fi",
+  "update.checkButton": "Zkontrolovat aktualizace",
+  "update.upToDate": "Máte nejnovější verzi",
+  "update.checkFailed": "Kontrolu aktualizací se nepodařilo provést",
+  "update.available": "Je dostupná aktualizace v{version}",
+  "update.download": "Stáhnout",
+  "update.dismiss": "Zavřít",
 
   "tabs.connection": "Připojení",
   "tabs.trackLayout": "Rozložení stop",

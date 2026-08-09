@@ -28,6 +28,12 @@
   "topbar.stop": "Stop",
   "kofi.button": "Support",
   "kofi.title": "Support on Ko-fi",
+  "update.checkButton": "Check for Updates",
+  "update.upToDate": "You're up to date",
+  "update.checkFailed": "Couldn't check for updates",
+  "update.available": "Update v{version} available",
+  "update.download": "Download",
+  "update.dismiss": "Dismiss",
 
   "tabs.connection": "Connection",
   "tabs.trackLayout": "Track Layout",

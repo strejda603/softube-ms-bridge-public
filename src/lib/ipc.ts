@@ -125,6 +125,23 @@ export function openKofiPage(): Promise<void> {
   return invoke("open_kofi_page");
 }
 
+/** Mirrors `bridge_tauri::UpdateCheckResult` (`#[serde(rename_all = "camelCase")]`). */
+export interface UpdateCheckResult {
+  available: boolean;
+  latestVersion: string | null;
+  downloadUrl: string | null;
+  releaseUrl: string | null;
+  error: boolean;
+}
+
+export function checkForUpdate(): Promise<UpdateCheckResult> {
+  return invoke("check_for_update");
+}
+
+export function openDownload(url: string): Promise<void> {
+  return invoke("open_download", { url });
+}
+
 export function getStatus(): Promise<StatusSnapshot | null> {
   return invoke("get_status");
 }
