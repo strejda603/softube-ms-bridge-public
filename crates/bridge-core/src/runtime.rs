@@ -1657,9 +1657,6 @@ fn handle_control_message(
             state.has_sent_initial_track_dump = false;
             true
         }
-        // No-op pending Task 7 removing this variant entirely -- there's no status bank left
-        // to reaffirm.
-        ControlAction::ReaffirmStatusBank => false,
     }
 }
 

@@ -77,10 +77,6 @@ pub enum ControlAction {
     /// Force a full Console 1 re-sync — only meaningful while running (there's no Mixing
     /// Station data to resync from in standby).
     ScheduleFullResync,
-    /// Re-affirm just the status/Start bank — used in standby instead of a full resync, since
-    /// there are no real channels to resync and `ScheduleFullResync`'s underlying mechanism
-    /// would otherwise create/activate every real channel slot, undoing standby's deactivation.
-    ReaffirmStatusBank,
     EnableOsd,
     DisableOsd,
     /// Only reachable via a handshake ack when running and the initial dump hasn't gone out yet.
@@ -100,11 +96,9 @@ pub fn decide_control_actions(
     match msg {
         ParsedControlMessage::Reset => {
             let mut actions = vec![ControlAction::DisableOsd, ControlAction::ResendHandshake];
-            actions.push(if lifecycle == Lifecycle::Running {
-                ControlAction::ScheduleFullResync
-            } else {
-                ControlAction::ReaffirmStatusBank
-            });
+            if lifecycle == Lifecycle::Running {
+                actions.push(ControlAction::ScheduleFullResync);
+            }
             actions
         }
         ParsedControlMessage::Enable => vec![ControlAction::EnableOsd],
@@ -251,15 +245,11 @@ mod tests {
     }
 
     #[test]
-    fn reset_while_standby_reaffirms_status_bank_instead() {
+    fn reset_while_standby_does_nothing_extra() {
         let actions = decide_control_actions(ParsedControlMessage::Reset, Lifecycle::Standby, true);
         assert_eq!(
             actions,
-            vec![
-                ControlAction::DisableOsd,
-                ControlAction::ResendHandshake,
-                ControlAction::ReaffirmStatusBank
-            ]
+            vec![ControlAction::DisableOsd, ControlAction::ResendHandshake]
         );
     }
 
