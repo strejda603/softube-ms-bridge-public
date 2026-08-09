@@ -1,6 +1,5 @@
 pub mod bare_update_queue;
 pub mod channel_data_message;
-pub mod console1_status_bank;
 pub mod console_information;
 pub mod control_messages;
 pub mod dsp_field_metadata;
