@@ -38,6 +38,14 @@ pub struct StatusSnapshot {
 /// only ever matched the macOS `.app` bundle's *display* name, which was verified against a real
 /// macOS install but never against a real Windows one; on Windows it silently never matched
 /// anything, leaving the topbar dot permanently red despite Mixing Station actually running.
+///
+/// `console1_osd`'s needle ("Softube On-Screen Display") is a display name too, but unlike
+/// `mixing_station`'s old needle it genuinely does appear on Windows -- confirmed via
+/// `Get-CimInstance Win32_Process` against a real Windows 11 install: the executable itself is
+/// literally named `Softube On-Screen Display (x64).exe`, installed at
+/// `C:\Program Files\Softube\Plug-Ins 64-bit\`. No fix needed here; this is documented so a
+/// future reader doesn't assume it has the same bug `mixing_station` had just because both
+/// needles started life as macOS-only-verified display names.
 pub fn compute_status(process_command_lines: &[String]) -> StatusSnapshot {
     let has_process = |needle: &str| process_command_lines.iter().any(|n| n.contains(needle));
 
@@ -85,6 +93,18 @@ mod tests {
         ]);
         let snap = compute_status(&processes);
         assert!(snap.mixing_station);
+    }
+
+    /// Confirms `console1_osd`'s needle, unlike `mixing_station`'s old one, genuinely does work
+    /// on Windows -- fixture is the exact real command line from `Get-CimInstance Win32_Process`
+    /// against a real Windows 11 install.
+    #[test]
+    fn windows_console1_osd_process_is_detected() {
+        let processes = names(&[
+            r"C:\Program Files\Softube\Plug-Ins 64-bit\Softube On-Screen Display (x64).exe",
+        ]);
+        let snap = compute_status(&processes);
+        assert!(snap.console1_osd);
     }
 
     #[test]
