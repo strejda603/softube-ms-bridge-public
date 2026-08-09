@@ -160,7 +160,7 @@ pub struct BridgeRuntimeHandle {
 struct BridgeState {
     lifecycle: Lifecycle,
     osd_enabled: bool,
-    /// The full Console 1 layout (status/Start bank + input/bus/main banks), built from
+    /// The full Console 1 layout (input/bus/main banks), built from
     /// `config` and `console_architecture` — matches `startBridgeProcess()` calling
     /// `rebuildTrackLayout()` unconditionally before ever entering standby (using whatever
     /// architecture is known at that moment, which is the hardcoded defaults until the first
@@ -286,9 +286,9 @@ fn track_info_to_trackbatch_json(track: &TrackInfo) -> serde_json::Value {
     serde_json::to_value(fields).expect("ConsoleTrackFields always serializes")
 }
 
-/// Same, but for EVERY cached track including the status/Start bank. Port of
-/// `batchDeactivateAllTracks`, used only by shutdown — standby entry uses the
-/// real-channels-only variant above, matching JS's two distinct call sites.
+/// Deactivate every cached track. Port of `batchDeactivateAllTracks` — used by both shutdown
+/// and standby entry (there's no separate real-channels-only variant since there are no
+/// non-real-channel slots to exclude anymore).
 fn deactivate_all_tracks(
     state: &BridgeState,
     midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
@@ -330,7 +330,7 @@ fn enter_standby_state(
 /// Enter `running`: rebuild the track layout from the (possibly just-patched) config, open a
 /// forced-resync initialization window, spawn the Mixing Station WS engine (torn down again on
 /// the next standby transition, matching JS's per-Start/Stop `new WebSocket(...)`/`.close()`
-/// cycle) and show "Stop" on the Start slot. Connection-open orchestration lives in
+/// cycle). Connection-open orchestration lives in
 /// `handle_ws_connected`, fired when `WsEvent::Connected` arrives — not here, since spawning is
 /// instant but the real TCP connect is not.
 ///
@@ -1951,7 +1951,7 @@ pub fn spawn_bridge_runtime(initial_config: RuntimeConfig) -> BridgeRuntimeHandl
                     // resync path creates and activates real channel tracks, and
                     // `finalize_initialization` has no lifecycle check of its own, so a patch
                     // applied in standby would push a full track dump to hardware that should
-                    // only be showing the status/Start bank. Callers are supposed to send this
+                    // be showing nothing while standby. Callers are supposed to send this
                     // only while running, but that's an assumption about the caller — a caller
                     // whose own state has drifted could still send one, so guard here too.
                     Some(BridgeCommand::ConfigApply(patch)) => {
@@ -3424,7 +3424,7 @@ mod tests {
     /// Standby-leak guard, matching JS's `config:apply` stdin handler (`index.js:526-545`).
     /// Without it, the resync path arms the init-flush timer, and `finalize_initialization`
     /// has no lifecycle check of its own — so the timer would push a full real-channel
-    /// `trackBatch` dump to hardware that should only be showing the status/Start bank.
+    /// `trackBatch` dump to hardware that should be showing nothing while standby.
     #[tokio::test]
     async fn config_apply_while_standby_is_ignored() {
         let handle = spawn_bridge_runtime(RuntimeConfig::default());

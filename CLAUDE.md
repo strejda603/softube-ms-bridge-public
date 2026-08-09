@@ -65,8 +65,8 @@ No lint script exists for Rust beyond `cargo clippy` (not wired into a script �
 - **`src-tauri`** — the Tauri v2 desktop shell (`lib.rs`, `main.rs`). Spawns
   `bridge_core::runtime` as a managed background task, exposes it to the Svelte webview via
   `#[tauri::command]`s and `Emitter::emit` events, persists config via Tauri's own
-  `app_config_dir()`, manages saved presets (`presets.rs`), polls MIDI-port/process-presence
-  status for the topbar's 2 status dots (`status_gather.rs`), parses the `--lang` launch flag
+  `app_config_dir()`, manages saved presets (`presets.rs`), polls process-presence status for
+  the topbar's 2 status dots (`status_gather.rs`), parses the `--lang` launch flag
   (`cli_args.rs`), and installs graceful shutdown for both window-close and Ctrl+C/SIGINT.
 - **`src/`** — the Svelte 5 (runes) + TypeScript frontend the Tauri GUI serves: app shell,
   Connection/Track-Layout/Sends-&-Colors/Presets tabs, a collapsible log drawer, i18n
