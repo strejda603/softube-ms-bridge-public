@@ -294,8 +294,8 @@ mod tests {
 
     #[test]
     fn handshake_ack_while_standby_does_not_finalize_even_if_dump_not_sent() {
-        // Same standby-leak concern as ReaffirmStatusBank above — finalizing while standby
-        // would create/activate every real channel slot, undoing standby's deactivation.
+        // Same standby-leak concern noted above for Reset-while-standby — finalizing while
+        // standby would create/activate every real channel slot, undoing standby's deactivation.
         let actions = decide_control_actions(
             ParsedControlMessage::HandshakeAck,
             Lifecycle::Standby,

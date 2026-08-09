@@ -1598,8 +1598,7 @@ fn arm_queue_flush_timers(
 }
 
 /// Returns `true` when the caller must arm the init-flush timer at `FORCE_RESYNC_FLUSH_DELAY`
-/// (the caller owns that timer), the same contract as `handle_hardware_trigger`/
-/// `handle_ws_connected`.
+/// (the caller owns that timer), the same contract as `handle_ws_connected`.
 #[must_use]
 fn handle_control_message(
     action: ControlAction,
