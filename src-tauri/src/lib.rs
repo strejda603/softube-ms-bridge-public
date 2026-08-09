@@ -3,11 +3,13 @@
 mod cli_args;
 mod presets;
 mod status_gather;
+mod update_checker;
 
 use bridge_config::{BridgeConfigPatch, RuntimeConfig};
 use bridge_core::lifecycle::Lifecycle;
 use bridge_core::runtime::{spawn_bridge_runtime, BridgeCommand, BridgeEvent};
 use bridge_core::status_monitor::StatusSnapshot;
+use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
@@ -298,6 +300,66 @@ async fn open_kofi_page(app_handle: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Result of an update check, mirrored to the frontend as `UpdateCheckResult`. `error: true`
+/// means the check itself failed (network error, bad API response) -- distinct from
+/// `available: false` with `error: false`, which means the check succeeded and the app is
+/// already up to date.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCheckResult {
+    available: bool,
+    latest_version: Option<String>,
+    download_url: Option<String>,
+    release_url: Option<String>,
+    error: bool,
+}
+
+/// Public repo whose GitHub Releases this GUI checks against.
+const UPDATE_CHECK_REPO: &str = "strejda603/softube-ms-bridge-public";
+
+#[tauri::command]
+async fn check_for_update() -> UpdateCheckResult {
+    let release = match update_checker::fetch_latest_release(UPDATE_CHECK_REPO).await {
+        Ok(release) => release,
+        Err(e) => {
+            eprintln!("[update] check failed: {e}");
+            return UpdateCheckResult {
+                error: true,
+                ..Default::default()
+            };
+        }
+    };
+
+    if !update_checker::is_newer_version(env!("CARGO_PKG_VERSION"), &release.tag_name) {
+        return UpdateCheckResult::default();
+    }
+
+    let asset = update_checker::pick_release_asset(&release.assets, std::env::consts::OS);
+    UpdateCheckResult {
+        available: true,
+        latest_version: Some(release.tag_name.trim_start_matches(['v', 'V']).to_string()),
+        download_url: Some(
+            asset
+                .map(|a| a.browser_download_url.clone())
+                .unwrap_or_else(|| release.html_url.clone()),
+        ),
+        release_url: Some(release.html_url),
+        error: false,
+    }
+}
+
+#[tauri::command]
+async fn open_download(app_handle: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    if parsed.scheme() == "https" && parsed.host_str() == Some("github.com") {
+        app_handle
+            .opener()
+            .open_url(&url, None::<&str>)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Turns a panicking task's `JoinError` into a human-readable message, handling both the
 /// `&str` shape (`panic!("literal")`) and `String` shape (`panic!("{}", formatted)`) that
 /// `std::panic::catch_unwind` payloads commonly take.
@@ -562,6 +624,8 @@ pub fn run() {
             import_preset,
             open_presets_folder,
             open_kofi_page,
+            check_for_update,
+            open_download,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
