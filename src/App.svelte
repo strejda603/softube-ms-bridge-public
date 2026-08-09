@@ -313,7 +313,11 @@
   }
 
   async function handleSupportKofi() {
-    await ipc.openKofiPage();
+    try {
+      await ipc.openKofiPage();
+    } catch (e) {
+      appendLog(`[GUI] Failed to open Ko-fi page: ${e}`);
+    }
   }
 
   /** Applies this launch's `--start`/`--stop`/`--preset`/`--ws`/`--interval`/`--log` CLI flags,
