@@ -449,7 +449,7 @@ pub fn handle_midi_send_slots_update(
 mod tests {
     use super::*;
     use crate::channel_data_message::MsFormat;
-    use crate::console1_status_bank::Lifecycle;
+    use crate::lifecycle::Lifecycle;
     use crate::send_mapping::build_send_mapping;
     use crate::track_cache::{create_default_track_for_slot, DefaultTrackColors};
     use crate::track_layout::{LayoutSlot, LayoutSlotKind};

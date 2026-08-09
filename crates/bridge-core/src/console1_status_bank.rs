@@ -4,7 +4,7 @@
 //! this can be unit-tested without spinning up real MIDI/WS connections — same rationale as
 //! the JS original.
 
-use serde::Serialize;
+use crate::lifecycle::Lifecycle;
 use serde_json::Value;
 
 /// A single status indicator's identity: the field name used by the live status snapshot
@@ -86,17 +86,6 @@ pub struct StatusBankSlot {
     pub kind: SlotKind,
     pub ms_channels: Vec<u32>,
     pub ms_primary: Option<u32>,
-}
-
-/// The bridge's lifecycle state. Unlike JS's `"standby"|"running"` string (which could be
-/// passed anything, defaulting to standby), this enum has no third state to accidentally
-/// pass — so the JS test asserting an `undefined` lifecycle defaults to standby has no
-/// Rust equivalent; it's structurally impossible here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Lifecycle {
-    Standby,
-    Running,
 }
 
 /// Start/Stop toggle display: the label and color to show on the Start slot.
@@ -228,18 +217,6 @@ pub fn status_slot_color_for(is_on: &Value, on_color: u32, off_color: u32) -> u3
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn lifecycle_serializes_to_lowercase_json_strings() {
-        assert_eq!(
-            serde_json::to_string(&Lifecycle::Standby).unwrap(),
-            "\"standby\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Lifecycle::Running).unwrap(),
-            "\"running\""
-        );
-    }
 
     #[test]
     fn status_bank_size_and_start_slot_id_are_consistent() {

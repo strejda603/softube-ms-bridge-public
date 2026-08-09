@@ -8,7 +8,7 @@
 //! (`meteredObjectIds`, the metering2 subscribe request, `batchSendChangedMeters`) is
 //! `runtime.rs`'s job -- see `handle_active_meters_message` there.
 
-use crate::console1_status_bank::Lifecycle;
+use crate::lifecycle::Lifecycle;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

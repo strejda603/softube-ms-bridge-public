@@ -5,6 +5,7 @@ pub mod console_information;
 pub mod control_messages;
 pub mod dsp_field_metadata;
 pub mod echo_suppression;
+pub mod lifecycle;
 pub mod metering2_message;
 pub mod metering_utils;
 pub mod midi_color_utils;
