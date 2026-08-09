@@ -39,3 +39,22 @@ jobs:
           releaseName: 'v__VERSION__'
           releaseDraft: false
           prerelease: false
+
+      # Tauri's bundler only produces installers (msi/nsis) on Windows -- no portable/standalone
+      # target exists. The raw compiled binary needs no install step to run (only the WebView2
+      # runtime, which ships with Windows 10/11 by default), so it's uploaded as-is, renamed for
+      # clarity, as an extra release asset alongside the installer.
+      - name: Prepare portable exe (Windows only)
+        if: matrix.platform == 'windows-latest'
+        shell: cmd
+        run: copy src-tauri\target\release\bridge-tauri.exe softube-console1-ms-bridge-portable.exe
+
+      - name: Upload portable exe (Windows only)
+        if: matrix.platform == 'windows-latest'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: softube-console1-ms-bridge-portable.exe
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
