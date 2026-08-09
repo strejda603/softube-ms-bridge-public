@@ -14,49 +14,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            script: build:mac
-            args: ''
-          - os: windows-latest
-            script: build:win
-            args: ''
-          - os: ubuntu-latest
-            script: build:linux
-            args: ''
+          - platform: macos-latest
+          - platform: windows-latest
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install ALSA dev headers (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - uses: actions/setup-node@v7
         with:
           node-version: 26
 
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
       - run: npm ci
 
-      - run: npm run ${{ matrix.script }} ${{ matrix.args }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dist-${{ matrix.os }}
-          path: dist/**
-
-      - name: Create Release and Upload Assets
-        uses: softprops/action-gh-release@v3
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.zip
-            dist/*.deb
-          generate_release_notes: false
+      - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'v__VERSION__'
+          releaseDraft: false
+          prerelease: false
