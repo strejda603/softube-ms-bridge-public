@@ -17,10 +17,7 @@
 use crate::console_information::{apply_console_information, ConsoleArchitecture};
 use crate::bare_update_queue::BareUpdateQueue;
 use crate::channel_data_message::{parse_channel_data_get_message, MsFormat};
-use crate::console1_status_bank::{
-    hardware_trigger_type_for, start_slot_display_for, status_slot_color_for, HardwareTrigger,
-    Lifecycle, START_SLOT_OBJECT_ID,
-};
+use crate::lifecycle::Lifecycle;
 use crate::control_messages::{
     decide_control_actions, parse_active_meters, parse_control_message, ControlAction,
     ParsedControlMessage,
@@ -108,12 +105,6 @@ pub enum BridgeCommand {
     /// Live-apply a config patch without a lifecycle transition (JS's
     /// `applyRuntimeConfigAndResync`). See Task 3 for the full behavior this triggers.
     ConfigApply(BridgeConfigPatch),
-    /// A fresh live-status snapshot (MIDI hotplug / process detection) arrived -- push it onto
-    /// the Console 1 hardware's own status-bank LEDs via `apply_live_status_colors`. Sent by
-    /// the Tauri status-poll thread (`bridge-tauri`'s `status_gather`), independent of
-    /// lifecycle -- matches JS's `applyLiveStatusColors`, which runs regardless of Standby vs
-    /// Running.
-    StatusUpdate(StatusSnapshot),
     /// Run the full shutdown sequence (RESET, deactivate all tracks, clear cache,
     /// disable OSD, close WS, close MIDI) and exit the runtime task. Triggered by
     /// `bridge-cli`'s Ctrl+C handler today; a future Tauri window-close handler later.
@@ -283,47 +274,7 @@ fn default_colors(config: &RuntimeConfig) -> DefaultTrackColors {
     DefaultTrackColors {
         bus_color: config.console1_bus_color,
         main_color: config.console1_main_color,
-        status_off_color: 0x0000ff,
-        status_on_color: 0x00ff00,
-        start_color: 0xff841b,
-        stop_color: 0x5a28f8,
     }
-}
-
-/// Send a `trackBatch` SysEx message for the fixed status/Start bank (bank 0) — used entering
-/// standby and on RESET-while-standby, matching `sendStatusBankTracks`. Reads bank-0 slots
-/// directly out of `state.layout` (already built by `build_track_layout`, which itself already
-/// handles the status-bank-to-layout-slot conversion — Plan 2a's `track_layout` module, not
-/// re-derived here).
-fn send_status_bank_tracks(
-    state: &mut BridgeState,
-    midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
-    event_tx: &mpsc::UnboundedSender<BridgeEvent>,
-) {
-    let colors = default_colors(&state.config);
-    let bus_channel_start = state.bus_channel_start;
-    let bank_zero_slots: Vec<LayoutSlot> = state
-        .layout
-        .iter()
-        .filter(|s| s.object_id <= START_SLOT_OBJECT_ID)
-        .cloned()
-        .collect();
-    let mut batch = Vec::new();
-    for slot in &bank_zero_slots {
-        let track = state
-            .track_cache
-            .get_or_create(
-                slot.object_id,
-                slot,
-                state.lifecycle,
-                &colors,
-                bus_channel_start,
-                &mut state.rng,
-            )
-            .clone();
-        batch.push(track_info_to_trackbatch_json(&track));
-    }
-    send_sysex_and_log(midi_tx, event_tx, state.config.log_json, &json!({ "trackBatch": batch }));
 }
 
 /// Project a `TrackInfo` into the wire-safe `trackBatch` shape via `ConsoleTrackFields` (drops
@@ -334,111 +285,6 @@ fn send_status_bank_tracks(
 fn track_info_to_trackbatch_json(track: &TrackInfo) -> serde_json::Value {
     let fields = crate::sysex::ConsoleTrackFields::from(track);
     serde_json::to_value(fields).expect("ConsoleTrackFields always serializes")
-}
-
-/// Push the 7 status-bank indicator LEDs' colors from a live status snapshot -- port of JS's
-/// `applyLiveStatusColors`. Applies regardless of lifecycle state (this only touches per-slot
-/// cached track objects, creating them on demand, and force-sends targeted updates -- never
-/// `finalize_initialization`/a full track dump -- so it carries none of the standby-leak risk
-/// those do). Only sends a `trackBatch` frame when at least one slot's color actually changed;
-/// a stable status session between poll ticks sends nothing. On the very first poll tick after
-/// startup, each of the 7 status slots is created fresh at `colors.status_off_color` and then
-/// immediately compared against the real snapshot -- so if any indicator is already on at that
-/// point, at least one entry lands in that first `trackBatch`; an all-off first snapshot (e.g.
-/// nothing detected yet) matches the fresh off-color exactly and legitimately sends nothing.
-/// Both outcomes are correct/intended, matching JS.
-fn apply_live_status_colors(
-    state: &mut BridgeState,
-    midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
-    snapshot: &StatusSnapshot,
-    event_tx: &mpsc::UnboundedSender<BridgeEvent>,
-) {
-    let snapshot_value = serde_json::to_value(snapshot).expect("StatusSnapshot always serializes");
-    let colors = default_colors(&state.config);
-    let bus_channel_start = state.bus_channel_start;
-    let status_slots: Vec<LayoutSlot> = state
-        .layout
-        .iter()
-        .filter(|s| matches!(s.kind, LayoutSlotKind::Status { .. }))
-        .cloned()
-        .collect();
-
-    let mut changed = Vec::new();
-    for slot in &status_slots {
-        let key = match slot.kind {
-            LayoutSlotKind::Status { key, .. } => key,
-            _ => continue,
-        };
-        state.track_cache.get_or_create(
-            slot.object_id,
-            slot,
-            state.lifecycle,
-            &colors,
-            bus_channel_start,
-            &mut state.rng,
-        );
-        let is_on = snapshot_value.get(key).unwrap_or(&Value::Null);
-        let color = status_slot_color_for(is_on, colors.status_on_color, colors.status_off_color);
-        if let Some(track) = state.track_cache.get_mut(slot.object_id) {
-            if track.color != color {
-                track.color = color;
-                changed.push(json!({"trackId": track.track_id, "color": color}));
-            }
-        }
-    }
-
-    if !changed.is_empty() {
-        send_sysex_and_log(midi_tx, event_tx, state.config.log_json, &json!({ "trackBatch": changed }));
-    }
-}
-
-fn apply_start_slot_display(
-    state: &mut BridgeState,
-    midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
-    event_tx: &mpsc::UnboundedSender<BridgeEvent>,
-) {
-    let colors = default_colors(&state.config);
-    let display = start_slot_display_for(state.lifecycle, colors.start_color, colors.stop_color);
-    if let Some(track) = state.track_cache.get_mut(START_SLOT_OBJECT_ID) {
-        track.name = display.name.to_string();
-        track.color = display.color;
-        let updated = track.clone();
-        // NOTE: partial update — not routed through ConsoleTrackFields, so field names here
-        // aren't compile-time-checked against Console 1's allowlist like full-track sends are
-        // (see ConsoleTrackFields). Every field used here (trackId, name, color) is in the
-        // allowlist today; just no compiler backstop if a future edit adds a bad one.
-        send_sysex_and_log(
-            midi_tx,
-            event_tx,
-            state.config.log_json,
-            &json!({
-                "trackBatch": [{"trackId": updated.track_id, "name": updated.name, "color": updated.color}]
-            }),
-        );
-    }
-}
-
-/// Tell Console 1 to drop every cached real-channel track (`{trackId, isActive: false}`),
-/// leaving the status/Start bank alone. Port of `index.js`'s `deactivateRealChannelTracks`,
-/// whose "skip `status`/`start` slots" filter is expressed here as the same
-/// `object_id > START_SLOT_OBJECT_ID` bank-0 boundary the rest of this file already uses.
-///
-/// JS's equivalent takes a `forceSend` flag that bypasses `sendSysexToConsole1`'s OSD gate;
-/// this runtime has no transport-layer gate at all (OSD gating lives in the queue-flush
-/// functions), so these batches always go out — which is what every JS call site of this
-/// function asks for anyway.
-fn deactivate_real_channel_tracks(
-    state: &BridgeState,
-    midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
-    event_tx: &mpsc::UnboundedSender<BridgeEvent>,
-) {
-    let entries: Vec<serde_json::Value> = state
-        .track_cache
-        .iter()
-        .filter(|(&object_id, _)| object_id > START_SLOT_OBJECT_ID)
-        .map(|(_, track)| json!({"trackId": &track.track_id, "isActive": false}))
-        .collect();
-    send_track_batches(&entries, midi_tx, state.config.log_json, event_tx);
 }
 
 /// Same, but for EVERY cached track including the status/Start bank. Port of
@@ -474,15 +320,12 @@ fn enter_standby_state(
     }
     state.is_initializing = false;
     // Drop whatever is still sitting on the 20ms debounce timers. A Start→Stop inside that
-    // window would otherwise flush stale real-channel fields to Console 1 a moment after the
-    // display has already been reset to the status/Start bank. JS's `enterStandbyState` leaves
-    // its queues alone here — this is a deliberate improvement on it, not a port.
+    // window would otherwise flush stale fields to Console 1 a moment after every track has
+    // already been deactivated below.
     state.update_queue.take_all();
     state.bare_update_queue.take_all();
-    deactivate_real_channel_tracks(state, midi_tx, event_tx);
-    state.track_cache.reset_real_channels(START_SLOT_OBJECT_ID);
-    send_status_bank_tracks(state, midi_tx, event_tx);
-    apply_start_slot_display(state, midi_tx, event_tx);
+    deactivate_all_tracks(state, midi_tx, event_tx);
+    state.track_cache.clear();
 }
 
 /// Enter `running`: rebuild the track layout from the (possibly just-patched) config, open a
@@ -503,7 +346,7 @@ fn enter_standby_state(
 #[must_use]
 fn enter_running_state(
     state: &mut BridgeState,
-    midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
+    _midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
     event_tx: &mpsc::UnboundedSender<BridgeEvent>,
 ) -> bool {
     state.lifecycle = Lifecycle::Running;
@@ -523,7 +366,6 @@ fn enter_running_state(
         WS_RECONNECT_DELAY,
     );
     state.ws_handle = Some(handle);
-    apply_start_slot_display(state, midi_tx, event_tx);
     true
 }
 
@@ -534,7 +376,7 @@ fn rebuild_layout_and_reset_caches(state: &mut BridgeState) {
     state.bus_channel_start = state.console_architecture.bus_channel_start as usize;
     state.layout = build_default_layout(&state.config, &state.console_architecture);
     state.object_ids_by_ms_channel = object_ids_by_ms_channel(&state.layout);
-    state.track_cache.reset_real_channels(START_SLOT_OBJECT_ID);
+    state.track_cache.clear();
     state.init_seen_ms_channels.clear();
     state.sends_mode_ms_send_index = None;
     state.sends_mode_subscribed_ms_send_index = None;
@@ -976,7 +818,7 @@ fn finish_ws_connect(
     // sends mode is reset to `None` above, so any mirrored `send1..6` fields left on cached
     // Bus/Main tracks would otherwise ship to Console 1 in the full dump that the
     // `has_sent_initial_track_dump = false` reset forces.
-    state.track_cache.reset_real_channels(START_SLOT_OBJECT_ID);
+    state.track_cache.clear();
 
     subscribe_to_required_channel_data(state);
     refresh_dsp_fields_for_real_channels(state);
@@ -1756,22 +1598,6 @@ fn arm_queue_flush_timers(
     }
 }
 
-/// Returns `true` when the caller must arm the init-flush timer — see `enter_running_state`.
-fn handle_hardware_trigger(
-    trigger: HardwareTrigger,
-    state: &mut BridgeState,
-    midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
-    event_tx: &mpsc::UnboundedSender<BridgeEvent>,
-) -> bool {
-    match trigger {
-        HardwareTrigger::Start => enter_running_state(state, midi_tx, event_tx),
-        HardwareTrigger::Stop => {
-            enter_standby_state(state, midi_tx, event_tx);
-            false
-        }
-    }
-}
-
 /// Returns `true` when the caller must arm the init-flush timer at `FORCE_RESYNC_FLUSH_DELAY`
 /// (the caller owns that timer), the same contract as `handle_hardware_trigger`/
 /// `handle_ws_connected`.
@@ -1801,11 +1627,6 @@ fn handle_control_message(
                 state.config.log_json,
                 &json!({"handshake": {"dawName": "Mixing Station", "protocolVersion": [1, 2]}}),
             );
-            false
-        }
-        ControlAction::ReaffirmStatusBank => {
-            send_status_bank_tracks(state, midi_tx, event_tx);
-            apply_start_slot_display(state, midi_tx, event_tx);
             false
         }
         // Port of JS's `finalizeInitialization("handshake ack")` call inside
@@ -1840,71 +1661,11 @@ fn handle_control_message(
     }
 }
 
-/// Port of `index.js`'s `handleStatusOrStartSlotMidiMessage`. Status/Start bank slots aren't
-/// backed by any Mixing Station channel, so no MS writes are ever produced here.
-///
-/// For the Start slot specifically: detects the hardware Start/Stop trigger, then works around
-/// a real Console 1 firmware quirk confirmed via direct hardware testing — pushing
-/// `selected:false` back to the just-triggered Start slot's own trackId alone does NOT clear
-/// its selection latch on real hardware. Console 1 tracks "currently selected object" as its
-/// own mutually-exclusive latch that only moves when a *different* object gets selected. So:
-/// force-deselect the Start slot, then force-select a neighboring status-bank slot
-/// (`START_SLOT_OBJECT_ID - 2`, the last status indicator — it must be an ACTIVE slot; the
-/// empty spacer immediately before Start was confirmed NOT to work as the unlatch target).
-fn handle_status_or_start_slot_midi_message(
-    parsed: &serde_json::Value,
-    slot: &LayoutSlot,
-    state: &mut BridgeState,
-    midi_tx: &std::sync::mpsc::Sender<MidiCommand>,
-    event_tx: &mpsc::UnboundedSender<BridgeEvent>,
-) -> bool {
-    if slot.kind != LayoutSlotKind::Start {
-        return false;
-    }
-    let selected = parsed
-        .get("selected")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    let Some(trigger) = hardware_trigger_type_for(state.lifecycle, &selected) else {
-        return false;
-    };
-    let _ = event_tx.send(BridgeEvent::Log(format!(
-        "[Lifecycle] hardware trigger: {trigger:?}"
-    )));
-    let arm_init_flush = handle_hardware_trigger(trigger, state, midi_tx, event_tx);
-
-    let start_track_id = clone_or_create_track(state, slot.object_id, slot).track_id;
-    if let Some(track) = state.track_cache.get_mut(slot.object_id) {
-        track.selected = false;
-    }
-    state.update_queue.queue(
-        start_track_id,
-        HashMap::from([("selected".to_string(), json!(false))]),
-        true,
-    );
-
-    let neighbor_object_id = START_SLOT_OBJECT_ID - 2;
-    let neighbor_slot = state.layout[neighbor_object_id].clone();
-    let neighbor_track_id =
-        clone_or_create_track(state, neighbor_object_id, &neighbor_slot).track_id;
-    if let Some(track) = state.track_cache.get_mut(neighbor_object_id) {
-        track.selected = true;
-    }
-    state.update_queue.queue(
-        neighbor_track_id,
-        HashMap::from([("selected".to_string(), json!(true))]),
-        true,
-    );
-
-    arm_init_flush
-}
-
 /// Dispatches one inbound Console 1 SysEx message. Control messages route to
-/// `handle_control_message`; status/Start bank slots to the handler above; everything else runs
-/// the full 10-handler mixer/DSP fan-out, in `index.js`'s exact `handleMidiMessage` order.
+/// `handle_control_message`; everything else runs the full 10-handler mixer/DSP fan-out, in
+/// `index.js`'s exact `handleMidiMessage` order.
 ///
 /// Returns `true` when the caller must arm the init-flush timer at `FORCE_RESYNC_FLUSH_DELAY` --
-/// either because a hardware Start trigger entered Running (see `enter_running_state`), or
 /// because a dispatched control message (currently only `ControlAction::ScheduleFullResync`)
 /// requested a fresh resync window.
 fn handle_inbound_midi_message(
@@ -1967,14 +1728,6 @@ fn handle_inbound_midi_message(
         return false;
     };
 
-    // Handled before the MS-channel-driven dispatch below, which assumes a real `ms_primary`
-    // and would otherwise silently drop these on the `ms_primary` guard.
-    if matches!(
-        slot.kind,
-        LayoutSlotKind::Status { .. } | LayoutSlotKind::Start
-    ) {
-        return handle_status_or_start_slot_midi_message(&parsed, &slot, state, midi_tx, event_tx);
-    }
     if slot.kind == LayoutSlotKind::Empty {
         return false;
     }
@@ -2218,9 +1971,6 @@ pub fn spawn_bridge_runtime(initial_config: RuntimeConfig) -> BridgeRuntimeHandl
                                 "[Lifecycle] Ignoring config:apply -- not running.".to_string(),
                             ));
                         }
-                    }
-                    Some(BridgeCommand::StatusUpdate(snapshot)) => {
-                        apply_live_status_colors(&mut state, &engine.command_tx, &snapshot, &event_tx);
                     }
                     Some(BridgeCommand::Shutdown) | None => break,
                 },
