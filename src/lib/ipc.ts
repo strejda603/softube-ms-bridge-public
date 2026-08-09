@@ -31,7 +31,7 @@ export interface BridgeConfigPatch {
   console1BusColor?: number;
 }
 
-/** Mirrors `bridge_core::console1_status_bank::Lifecycle` (`#[serde(rename_all =
+/** Mirrors `bridge_core::lifecycle::Lifecycle` (`#[serde(rename_all =
  * "lowercase")]`). */
 export type Lifecycle = "standby" | "running";
 
@@ -63,13 +63,8 @@ export interface PresetPayload {
  * -- a stable session emits nothing after the first tick, so consumers must seed from
  * `getStatus()` on mount rather than waiting for the first event. */
 export interface StatusSnapshot {
-  ipad: boolean;
-  spdSxPro: boolean;
-  midiMaestro: boolean;
-  bomeMtp: boolean;
   mixingStation: boolean;
   console1Osd: boolean;
-  abletonLive: boolean;
 }
 
 // All commands below reject with the Rust-side error string on failure (e.g.

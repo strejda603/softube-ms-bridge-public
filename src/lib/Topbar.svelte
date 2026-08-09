@@ -64,17 +64,12 @@
   });
 
   const STATUS_DOTS: { key: keyof StatusSnapshot; kind: "midi" | "process"; labelKey: string; fullKey: string }[] = [
-    { key: "ipad", kind: "midi", labelKey: "status.ipad", fullKey: "status.ipadFull" },
-    { key: "spdSxPro", kind: "midi", labelKey: "status.spdSxPro", fullKey: "status.spdSxProFull" },
-    { key: "midiMaestro", kind: "midi", labelKey: "status.midiMaestro", fullKey: "status.midiMaestroFull" },
-    { key: "bomeMtp", kind: "process", labelKey: "status.bomeMtp", fullKey: "status.bomeMtpFull" },
     { key: "mixingStation", kind: "process", labelKey: "status.mixingStation", fullKey: "status.mixingStationFull" },
     { key: "console1Osd", kind: "process", labelKey: "status.console1Osd", fullKey: "status.console1OsdFull" },
-    { key: "abletonLive", kind: "process", labelKey: "status.abletonLive", fullKey: "status.abletonLiveFull" },
   ];
 
   // `statusSnapshot === null` means "no snapshot received yet" -- coercing null to false would
-  // flash all 7 dots red on every launch, even on integrations that ARE actually present, so
+  // flash both dots red on every launch, even on integrations that ARE actually present, so
   // it must render as its own "pending" state.
   function dotState(key: keyof StatusSnapshot): "pending" | "on" | "off" {
     if (!statusSnapshot) return "pending";
