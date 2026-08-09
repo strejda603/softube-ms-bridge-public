@@ -16,6 +16,7 @@
     onStart,
     onStop,
     onApply,
+    onSupportKofi,
   }: {
     lifecycle: Lifecycle;
     error: boolean;
@@ -27,6 +28,7 @@
     onStart: () => void;
     onStop: () => void;
     onApply: () => void;
+    onSupportKofi: () => void;
   } = $props();
 
   let showSettings = $state(false);
@@ -117,6 +119,9 @@
       <span class="subtitle">{t("app.subtitle")}</span>
     </div>
   </div>
+  <button class="btn kofi" title={t("kofi.title")} onclick={onSupportKofi}>
+    <span aria-hidden="true">♥</span> {t("kofi.button")}
+  </button>
   <div class="actions">
     <div class="status-indicators" role="group" aria-label={t("status.groupAriaLabel")}>
       {#each dots as dot (dot.key)}
@@ -276,6 +281,15 @@
   .btn.primary:disabled {
     background: rgba(59, 130, 246, 0.3);
     border-color: transparent;
+  }
+  .btn.kofi {
+    background: #ff5e5b;
+    border-color: #ff5e5b;
+    color: white;
+  }
+  .btn.kofi:hover {
+    background: #e5504d;
+    border-color: #e5504d;
   }
   .brand-icon {
     width: 28px;

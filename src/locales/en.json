@@ -26,6 +26,8 @@
   "topbar.startDisabledTitle": "Waiting for configuration to load…",
   "topbar.start": "Start",
   "topbar.stop": "Stop",
+  "kofi.button": "Support",
+  "kofi.title": "Support on Ko-fi",
 
   "tabs.connection": "Connection",
   "tabs.trackLayout": "Track Layout",

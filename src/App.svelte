@@ -312,6 +312,10 @@
     }
   }
 
+  async function handleSupportKofi() {
+    await ipc.openKofiPage();
+  }
+
   /** Applies this launch's `--start`/`--stop`/`--preset`/`--ws`/`--interval`/`--log` CLI flags,
    * once, on mount. Order matters and mirrors the old Electron launcher: preset load happens
    * first, then ws/interval/log overrides are applied on top (so CLI overrides always win over
@@ -467,6 +471,7 @@
     onStart={handleStart}
     onStop={handleStop}
     onApply={handleApply}
+    onSupportKofi={handleSupportKofi}
   />
   <TabBar active={activeTab} onSelect={(id) => (activeTab = id)} />
   <div class="tab-content">

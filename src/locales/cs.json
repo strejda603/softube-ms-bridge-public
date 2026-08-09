@@ -26,6 +26,8 @@
   "topbar.startDisabledTitle": "Čekání na načtení konfigurace…",
   "topbar.start": "Start",
   "topbar.stop": "Stop",
+  "kofi.button": "Podpořit",
+  "kofi.title": "Podpořit na Ko-fi",
 
   "tabs.connection": "Připojení",
   "tabs.trackLayout": "Rozložení stop",

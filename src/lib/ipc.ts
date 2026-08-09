@@ -121,6 +121,10 @@ export function openPresetsFolder(): Promise<void> {
   return invoke("open_presets_folder");
 }
 
+export function openKofiPage(): Promise<void> {
+  return invoke("open_kofi_page");
+}
+
 export function getStatus(): Promise<StatusSnapshot | null> {
   return invoke("get_status");
 }
