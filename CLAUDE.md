@@ -46,7 +46,7 @@ No lint script exists for Rust beyond `cargo clippy` (not wired into a script �
 - **`crates/bridge-core`** — the actual bridge logic, a Rust port of what used to be a single
   `index.js` file. Pure, side-effect-free logic lives in small sibling modules (`value_coercion.rs`,
   `pan_utils.rs`, `midi_color_utils.rs`, `metering_utils.rs`, `metering2_message.rs`,
-  `console1_status_bank.rs`, `track_layout.rs`, `sysex.rs`, `send_mapping.rs`,
+  `lifecycle.rs`, `track_layout.rs`, `sysex.rs`, `send_mapping.rs`,
   `dsp_field_metadata.rs`, `control_messages.rs`, `sends_mode.rs`, `ms_param_apply.rs`,
   `channel_data_message.rs`, `echo_suppression.rs`, `track_cache.rs`, `track_id.rs`,
   `console_information.rs`, `status_monitor.rs`, `update_queue.rs`, `bare_update_queue.rs`,
@@ -66,7 +66,7 @@ No lint script exists for Rust beyond `cargo clippy` (not wired into a script �
   `bridge_core::runtime` as a managed background task, exposes it to the Svelte webview via
   `#[tauri::command]`s and `Emitter::emit` events, persists config via Tauri's own
   `app_config_dir()`, manages saved presets (`presets.rs`), polls MIDI-port/process-presence
-  status for the topbar's 7 status dots (`status_gather.rs`), parses the `--lang` launch flag
+  status for the topbar's 2 status dots (`status_gather.rs`), parses the `--lang` launch flag
   (`cli_args.rs`), and installs graceful shutdown for both window-close and Ctrl+C/SIGINT.
 - **`src/`** — the Svelte 5 (runes) + TypeScript frontend the Tauri GUI serves: app shell,
   Connection/Track-Layout/Sends-&-Colors/Presets tabs, a collapsible log drawer, i18n
@@ -107,15 +107,19 @@ messages. `docs/ms-apidoc.md`, `docs/console-data-paths.json`, and `docs/ws-data
 ### Track layout, sends, lifecycle
 
 Console 1 Fader Mk III has 10 physical faders, so tracks are banked 10-wide
-(`track_layout.rs`'s `build_track_layout`). `input_track_order`/`bus_track_order`
-(`RuntimeConfig` fields, optionally `[left, right]` stereo pairs) drive ordering; Main is
-placed once on the last bus bank's 10th fader. "Sends mode" is a selection-driven remapping
-(`sends_mode.rs`) — selecting a bus master temporarily repoints Console 1's mute/pan onto
-that bus's send slot. Console 1's 6 physical sends map onto Mixing Station's up-to-16 bus
-sends via `c1_send_to_ms_bus_number` (`send_mapping.rs`). Bridge lifecycle is a 2-state
-machine (`Standby`/`Running`, `console1_status_bank::Lifecycle`) tracked in `runtime.rs`,
-separate from the unrelated Standard/Sends mode concept — don't conflate the two when reading
-logs (`[Lifecycle]` vs `[Mode]` prefixes).
+(`track_layout.rs`'s `build_track_layout`), starting at object_id 0 — **this edition has
+no hardware Status Bank**, unlike the private main branch this was forked from. Don't go
+looking for `console1_status_bank.rs` or a reserved bank-0 slot range here; they don't
+exist in this edition. `input_track_order`/`bus_track_order` (`RuntimeConfig` fields,
+optionally `[left, right]` stereo pairs) drive ordering; Main is placed once on the last
+bus bank's 10th fader. "Sends mode" is a selection-driven remapping (`sends_mode.rs`) —
+selecting a bus master temporarily repoints Console 1's mute/pan onto that bus's send
+slot. Console 1's 6 physical sends map onto Mixing Station's up-to-16 bus sends via
+`c1_send_to_ms_bus_number` (`send_mapping.rs`). Bridge lifecycle is a 2-state machine
+(`Standby`/`Running`, `lifecycle::Lifecycle`) tracked in `runtime.rs`, separate from the
+unrelated Standard/Sends mode concept — don't conflate the two when reading logs
+(`[Lifecycle]` vs `[Mode]` prefixes). This edition's topbar shows only 2 status dots
+(Mixing Station, Console 1 On-Screen Display), not main's 7 — see `status_monitor.rs`.
 
 ### Config and persistence
 

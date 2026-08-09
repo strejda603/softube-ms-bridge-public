@@ -201,18 +201,13 @@ When run via the GUI, the bridge runs as an in-process background task started w
 launches and stays alive (holding the Console 1 Fader MIDI connection) for the life of the app —
 it doesn't restart on every Start/Stop. Start/Stop instead toggle between two states:
 
-- **Standby**: Console 1 Fader connected, a fixed status bank (bank 0) shown on the fader, no
-  Mixing Station connection.
-- **Running**: full bridging active, plus the status bank continues to be shown.
+- **Standby**: Console 1 Fader connected, no Mixing Station connection.
+- **Running**: full bridging active.
 
-The 7 status slots (iPad, SPD-SX PRO, MIDI Maestro, Bome MIDI Translator Pro, Mixing Station,
-Console 1 On-Screen Display, Ableton Live 12 Suite) show green when present, red when not —
-mirroring the GUI's own topbar dots — and update live in either lifecycle state, roughly every 2
-seconds.
-
-The status bank's 10th slot doubles as a physical Start/Stop button — pressing it while in standby
-starts the bridge (using whatever config is currently loaded in the GUI), pressing it while running
-stops it. It shows "Start" (orange) or "Stop" (red) accordingly.
+This edition has no hardware Status Bank or physical Start/Stop trigger on the Console 1
+Fader — Start/Stop is GUI-only, via the topbar buttons. The GUI's topbar shows 2 status
+dots (Mixing Station, Console 1 On-Screen Display), green when present and red when not,
+updating live roughly every 2 seconds.
 
 ## Shutdown behavior
 
@@ -246,24 +241,11 @@ binary:
     WS/MIDI JSON payloads. There's currently no separate metering-only debug log level (JS's old
     `LOG_METERING` toggle hasn't been ported).
 
-- A topbar status dot (iPad/SPD-SX PRO/MIDI Maestro/Bome MIDI Translator Pro/Mixing
-  Station/Console 1 On-Screen Display/Ableton Live 12 Suite) never turns green despite the
-  device/app being present:
+- A topbar status dot (Mixing Station/Console 1 On-Screen Display) never turns green
+  despite the app being present:
   - The match string in [`src-tauri/src/status_gather.rs`](src-tauri/src/status_gather.rs) likely
-    doesn't match what your system actually reports. Check the exact MIDI port name in Audio MIDI
-    Setup, or the exact process name via `ps -Ao args= | grep -i <app name>`, and adjust the
-    corresponding match string there.
-
-- The status/Start bank never appears on the physical Console1 Fader:
-  - Check the GUI's log panel for `[Lifecycle]`-prefixed lines confirming the bridge found the
-    Console 1 Fader port — if it's still logged as waiting, the port isn't being detected (see the
-    "MIDI port not found" entry above).
-
-- Pressing the hardware Start/Stop slot does nothing:
-  - Confirm the GUI window is open (the bridge only runs while the GUI is running).
-  - If you click Start (or press the hardware slot) within a second or two of launching the app,
-    the bridge may not have found the Console 1 Fader yet — wait for the Console 1 Fader's status
-    bank to appear before pressing Start.
+    doesn't match what your system actually reports. Check the exact process name via
+    `ps -Ao args= | grep -i <app name>`, and adjust the corresponding match string there.
 
 ## Support
 

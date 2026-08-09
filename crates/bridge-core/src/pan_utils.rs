@@ -2,7 +2,7 @@
 //!
 //! Ported from `panUtils.js`. Kept separate from the rest of `bridge-core` so this logic
 //! mirrors the JS module split (isolated for unit testing without spinning up real
-//! MIDI/WS connections) — same rationale as `console1_status_bank` and `midi_color_utils`.
+//! MIDI/WS connections) — same rationale as `lifecycle` and `midi_color_utils`.
 
 /// Threshold (0..1) where a stereo-linked pair's width reaches 0 and mono panning begins.
 pub const STEREO_HYBRID_NARROW_ZONE: f64 = 0.25;
