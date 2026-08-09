@@ -66,8 +66,10 @@ No lint script exists for Rust beyond `cargo clippy` (not wired into a script â€
   `bridge_core::runtime` as a managed background task, exposes it to the Svelte webview via
   `#[tauri::command]`s and `Emitter::emit` events, persists config via Tauri's own
   `app_config_dir()`, manages saved presets (`presets.rs`), polls process-presence status for
-  the topbar's 2 status dots (`status_gather.rs`), parses the `--lang` launch flag
-  (`cli_args.rs`), and installs graceful shutdown for both window-close and Ctrl+C/SIGINT.
+  the topbar's 2 status dots (`status_gather.rs`), checks the public repo's GitHub Releases for
+  a newer version (`update_checker.rs`, wired via the `check_for_update`/`open_download`
+  commands), parses the `--lang` launch flag (`cli_args.rs`), and installs graceful shutdown for
+  both window-close and Ctrl+C/SIGINT.
 - **`src/`** â€” the Svelte 5 (runes) + TypeScript frontend the Tauri GUI serves: app shell,
   Connection/Track-Layout/Sends-&-Colors/Presets tabs, a collapsible log drawer, i18n
   (`src/lib/i18n.svelte.ts` + `src/locales/{en,cs}.json`), status dots, settings popover.

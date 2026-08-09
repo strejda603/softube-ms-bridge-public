@@ -19,6 +19,7 @@ It mirrors track state (name/color/volume/mute/solo/pan/selection + meters) and 
 - [What it supports](#what-it-supports)
 - [Building the desktop app](#building-the-desktop-app)
 - [Localization](#localization)
+- [Update check](#update-check)
 - [Track layout (banks + ordering)](#track-layout-banks--ordering)
 - [Sends](#sends)
 - [Metering](#metering)
@@ -126,6 +127,16 @@ To add a language:
    to how the language should read in its own selector entry (e.g. `"Deutsch"`, not `"German"`).
 2. Register the new locale in `src/lib/i18n.svelte.ts`'s `locales` map.
 3. The new locale then shows up in the settings popover's language selector automatically.
+
+## Update check
+
+The same settings popover (gear icon) checks this repo's public mirror
+([`strejda603/softube-ms-bridge-public`](https://github.com/strejda603/softube-ms-bridge-public))
+for a newer release — silently on launch, or on demand via the "Check for Updates" button. If a
+newer version is published there, a dismissible pill offers a direct download link (matched to
+your platform by file extension — `.dmg` on macOS, `.msi`/`.exe` on Windows). Nothing is
+downloaded or installed automatically; the download link opens in your system's default browser,
+never inside the app itself.
 
 The bridge's own console/log output is technical/debug text, not user-facing UI, and is
 intentionally out of scope — it stays English-only, same as most server/daemon logs.
