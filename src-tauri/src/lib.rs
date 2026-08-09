@@ -350,7 +350,9 @@ async fn check_for_update() -> UpdateCheckResult {
 
 #[tauri::command]
 async fn open_download(app_handle: tauri::AppHandle, url: String) -> Result<(), String> {
-    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    let Ok(parsed) = url::Url::parse(&url) else {
+        return Ok(()); // Malformed URL -- silently ignore, matching the original's behavior.
+    };
     if parsed.scheme() == "https" && parsed.host_str() == Some("github.com") {
         app_handle
             .opener()
