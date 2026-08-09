@@ -4,7 +4,7 @@
 //! See `index.js`'s `createDefaultTrackForSlot`/`getDefaultNameForObjectId`/
 //! `getOrCreateTrackInfo`/`resetRealChannelTrackCache` for the originals this ports.
 
-use crate::console1_status_bank::{start_slot_display_for, Lifecycle};
+use crate::lifecycle::Lifecycle;
 use crate::dsp_field_metadata::headamp_gain_db_to_normalized;
 use crate::sysex::ConsoleTrackFields;
 use crate::track_id::TrackIdRegistry;
@@ -81,19 +81,10 @@ impl From<&TrackInfo> for ConsoleTrackFields {
     }
 }
 
-/// Colors used when building a slot's default `TrackInfo` — bundles the user-configurable
-/// bus/main colors with the fixed status-bank colors (see `console1_status_bank`).
+/// Colors used when building a slot's default `TrackInfo`.
 pub struct DefaultTrackColors {
     pub bus_color: u32,
     pub main_color: u32,
-    pub status_off_color: u32,
-    /// Color a status-bank LED shows when its indicator is live/on. Only ever applied by
-    /// `runtime::apply_live_status_colors` after the first live status tick — a freshly
-    /// created status slot (`create_default_track_for_slot`) always starts at
-    /// `status_off_color`, matching JS's `getOrCreateTrackInfo`/`applyLiveStatusColors` split.
-    pub status_on_color: u32,
-    pub start_color: u32,
-    pub stop_color: u32,
 }
 
 /// Compute a layout slot's default display name (the fallback used when Mixing Station
@@ -158,7 +149,7 @@ fn default_dsp_fields() -> HashMap<String, Value> {
 pub fn create_default_track_for_slot(
     slot: &LayoutSlot,
     track_id: String,
-    lifecycle: Lifecycle,
+    _lifecycle: Lifecycle,
     colors: &DefaultTrackColors,
     bus_channel_start: usize,
 ) -> TrackInfo {
@@ -171,17 +162,6 @@ pub fn create_default_track_for_slot(
         LayoutSlotKind::Bus => color = colors.bus_color,
         LayoutSlotKind::Main => color = colors.main_color,
         LayoutSlotKind::Empty => is_active = false,
-        LayoutSlotKind::Status { label, .. } => {
-            name = label.to_string();
-            color = colors.status_off_color;
-            send_on = [true; 6];
-        }
-        LayoutSlotKind::Start => {
-            let display = start_slot_display_for(lifecycle, colors.start_color, colors.stop_color);
-            name = display.name.to_string();
-            color = display.color;
-            send_on = [true; 6];
-        }
         LayoutSlotKind::Input => {}
     }
 
@@ -254,12 +234,9 @@ impl TrackCache {
         self.track_ids.object_id_for_track_id(track_id)
     }
 
-    /// Drop every cached track above `start_slot_object_id` (the real input/bus/main channels),
-    /// preserving the status/Start bank's cached tracks — used entering standby, matching
-    /// `resetRealChannelTrackCache`'s "status bank colors survive an MS reconnect" rationale.
-    pub fn reset_real_channels(&mut self, start_slot_object_id: usize) {
-        self.tracks
-            .retain(|&object_id, _| object_id <= start_slot_object_id);
+    /// Drop every cached track. Used entering standby and on layout rebuild.
+    pub fn clear(&mut self) {
+        self.tracks.clear();
     }
 
     /// Iterate over every currently-cached `(object_id, track)` pair.
@@ -278,10 +255,6 @@ mod tests {
         DefaultTrackColors {
             bus_color: 0x800080,
             main_color: 0x00a5ff,
-            status_off_color: 0x0000ff,
-            status_on_color: 0x00ff00,
-            start_color: 0xff841b,
-            stop_color: 0x5a28f8,
         }
     }
 
@@ -418,46 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn create_default_track_status_slot_uses_label_as_name_and_all_sends_on() {
-        let slot = LayoutSlot {
-            object_id: 0,
-            kind: LayoutSlotKind::Status {
-                key: "ipad",
-                label: "iPad",
-            },
-            ms_channels: vec![],
-            ms_primary: None,
-            pan_locked: false,
-        };
-        let c = colors();
-        let track = create_default_track_for_slot(&slot, "X".into(), Lifecycle::Standby, &c, 48);
-        assert_eq!(track.name, "iPad");
-        assert_eq!(track.color, c.status_off_color);
-        assert!(track.send_on.iter().all(|&on| on));
-    }
-
-    #[test]
-    fn create_default_track_start_slot_reflects_lifecycle() {
-        let slot = LayoutSlot {
-            object_id: 9,
-            kind: LayoutSlotKind::Start,
-            ms_channels: vec![],
-            ms_primary: None,
-            pan_locked: false,
-        };
-        let c = colors();
-        let standby_track =
-            create_default_track_for_slot(&slot, "X".into(), Lifecycle::Standby, &c, 48);
-        assert_eq!(standby_track.name, "Start");
-        assert_eq!(standby_track.color, c.start_color);
-
-        let running_track =
-            create_default_track_for_slot(&slot, "X".into(), Lifecycle::Running, &c, 48);
-        assert_eq!(running_track.name, "Stop");
-        assert_eq!(running_track.color, c.stop_color);
-    }
-
-    #[test]
     fn create_default_track_dsp_fields_have_correct_defaults() {
         let slot = input_slot(10, vec![0]);
         let track =
@@ -515,27 +448,18 @@ mod tests {
     }
 
     #[test]
-    fn cache_reset_real_channels_preserves_bank_0_drops_the_rest() {
+    fn cache_clear_drops_all_cached_tracks() {
         let mut rng = StdRng::seed_from_u64(12);
         let mut cache = TrackCache::new();
         let c = colors();
-        let status_slot = LayoutSlot {
-            object_id: 0,
-            kind: LayoutSlotKind::Status {
-                key: "ipad",
-                label: "iPad",
-            },
-            ms_channels: vec![],
-            ms_primary: None,
-            pan_locked: false,
-        };
-        let input = input_slot(10, vec![0]);
-        cache.get_or_create(0, &status_slot, Lifecycle::Standby, &c, 48, &mut rng);
-        cache.get_or_create(10, &input, Lifecycle::Standby, &c, 48, &mut rng);
+        let slot_a = input_slot(0, vec![0]);
+        let slot_b = input_slot(10, vec![10]);
+        cache.get_or_create(0, &slot_a, Lifecycle::Standby, &c, 48, &mut rng);
+        cache.get_or_create(10, &slot_b, Lifecycle::Standby, &c, 48, &mut rng);
 
-        cache.reset_real_channels(9); // START_SLOT_OBJECT_ID
+        cache.clear();
 
-        assert!(cache.get(0).is_some());
+        assert!(cache.get(0).is_none());
         assert!(cache.get(10).is_none());
     }
 
