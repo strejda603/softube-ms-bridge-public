@@ -44,10 +44,14 @@ jobs:
       # target exists. The raw compiled binary needs no install step to run (only the WebView2
       # runtime, which ships with Windows 10/11 by default), so it's uploaded as-is, renamed for
       # clarity, as an extra release asset alongside the installer.
+      #
+      # Path is target\release\, not src-tauri\target\release\ -- this repo's root Cargo.toml
+      # declares a [workspace] with src-tauri as a member, so cargo puts build output in the
+      # workspace root's target dir regardless of which member crate is built.
       - name: Prepare portable exe (Windows only)
         if: matrix.platform == 'windows-latest'
         shell: cmd
-        run: copy src-tauri\target\release\bridge-tauri.exe softube-console1-ms-bridge-portable.exe
+        run: copy target\release\bridge-tauri.exe softube-console1-ms-bridge-portable.exe
 
       - name: Upload portable exe (Windows only)
         if: matrix.platform == 'windows-latest'
