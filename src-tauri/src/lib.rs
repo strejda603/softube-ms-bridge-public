@@ -290,6 +290,14 @@ async fn open_presets_folder(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn open_kofi_page(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle
+        .opener()
+        .open_url("https://ko-fi.com/K3N223V22V", None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Turns a panicking task's `JoinError` into a human-readable message, handling both the
 /// `&str` shape (`panic!("literal")`) and `String` shape (`panic!("{}", formatted)`) that
 /// `std::panic::catch_unwind` payloads commonly take.
@@ -553,6 +561,7 @@ pub fn run() {
             export_preset,
             import_preset,
             open_presets_folder,
+            open_kofi_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
