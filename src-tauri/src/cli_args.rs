@@ -2,9 +2,10 @@
 //! `app/cliArgs.js` (a plain, dependency-free parser). Every flag Electron's launcher accepted
 //! (`--start`/`--stop`/`--preset`/`--ws`/`--interval`/`--log`, plus this app's own `--lang`) is
 //! parsed once at launch and applied once by the frontend on mount -- see `get_launch_lang`/
-//! `get_launch_args` in `lib.rs`. Unlike Electron, this app has no single-instance forwarding
-//! (no `tauri-plugin-single-instance` wired in), so a second launch opens a second window rather
-//! than forwarding its args to the first -- these flags only ever affect a fresh launch.
+//! `get_launch_args` in `lib.rs`. `tauri-plugin-single-instance` (wired in `lib.rs`'s `run()`)
+//! blocks a second launch from ever reaching this parser: it re-focuses the already-running
+//! window and exits instead, without forwarding its args -- these flags only ever affect the
+//! first, real launch.
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

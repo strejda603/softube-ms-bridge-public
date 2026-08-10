@@ -5,6 +5,7 @@
   import * as ipc from "./ipc";
   import type { Lifecycle, StatusSnapshot, UpdateCheckResult } from "./ipc";
   import brandIcon from "../assets/icon.png";
+  import kofiIcon from "../assets/logomarkLogo.png";
 
   let {
     lifecycle,
@@ -117,9 +118,24 @@
     };
   });
 
-  const STATUS_DOTS: { key: keyof StatusSnapshot; kind: "midi" | "process"; labelKey: string; fullKey: string }[] = [
-    { key: "mixingStation", kind: "process", labelKey: "status.mixingStation", fullKey: "status.mixingStationFull" },
-    { key: "console1Osd", kind: "process", labelKey: "status.console1Osd", fullKey: "status.console1OsdFull" },
+  const STATUS_DOTS: {
+    key: keyof StatusSnapshot;
+    kind: "midi" | "process";
+    labelKey: string;
+    fullKey: string;
+  }[] = [
+    {
+      key: "mixingStation",
+      kind: "process",
+      labelKey: "status.mixingStation",
+      fullKey: "status.mixingStationFull",
+    },
+    {
+      key: "console1Osd",
+      kind: "process",
+      labelKey: "status.console1Osd",
+      fullKey: "status.console1OsdFull",
+    },
   ];
 
   // `statusSnapshot === null` means "no snapshot received yet" -- coercing null to false would
@@ -130,7 +146,11 @@
     return statusSnapshot[key] ? "on" : "off";
   }
 
-  function dotAriaLabel(kind: "midi" | "process", fullKey: string, state: "pending" | "on" | "off"): string {
+  function dotAriaLabel(
+    kind: "midi" | "process",
+    fullKey: string,
+    state: "pending" | "on" | "off",
+  ): string {
     const stateKey =
       state === "pending"
         ? "status.pending"
@@ -154,12 +174,12 @@
         state,
         ariaLabel: dotAriaLabel(dot.kind, dot.fullKey, state),
       };
-    })
+    }),
   );
 
   const isSends = $derived(/^Sends\b/i.test(mode ?? ""));
   const statusLabel = $derived(
-    error ? t("topbar.error") : lifecycle === "running" ? t("topbar.running") : t("topbar.stopped")
+    error ? t("topbar.error") : lifecycle === "running" ? t("topbar.running") : t("topbar.stopped"),
   );
 </script>
 
@@ -172,23 +192,32 @@
     </div>
   </div>
   <button class="btn kofi" title={t("kofi.title")} onclick={onSupportKofi}>
-    <span aria-hidden="true">♥</span> {t("kofi.button")}
+    <img src={kofiIcon} alt="Ko-fi tips" class="kofiimg" style="object-fit: contain;" aria-hidden="true">
+    {t("kofi.button")}
   </button>
   <div class="actions">
     <div class="status-indicators" role="group" aria-label={t("status.groupAriaLabel")}>
       {#each dots as dot (dot.key)}
         <span class="status-item" title={t(dot.fullKey)}>
-          <span class="status-dot" role="img" aria-label={dot.ariaLabel} data-state={dot.state}></span>
+          <span class="status-dot" role="img" aria-label={dot.ariaLabel} data-state={dot.state}
+          ></span>
           <span class="status-label">{t(dot.labelKey)}</span>
         </span>
       {/each}
     </div>
-    <div class="badge mode" class:sends={isSends}>{t("topbar.mode", { mode: mode ?? t("topbar.modeUnset") })}</div>
+    <div class="badge mode" class:sends={isSends}>
+      {t("topbar.mode", { mode: mode ?? t("topbar.modeUnset") })}
+    </div>
     <div class="badge status" class:error class:running={lifecycle === "running" && !error}>
       {statusLabel}
     </div>
     {#if applyVisible}
-      <button class="btn primary" title={t("topbar.applyChangesTitle")} disabled={applyDisabled} onclick={onApply}>
+      <button
+        class="btn primary"
+        title={t("topbar.applyChangesTitle")}
+        disabled={applyDisabled}
+        onclick={onApply}
+      >
         {t("topbar.applyChanges")}
       </button>
     {/if}
@@ -354,14 +383,31 @@
     border-color: transparent;
   }
   .btn.kofi {
-    background: #ff5e5b;
-    border-color: #ff5e5b;
+    background: #72a4f2;
+    border-color: #72a4f2;
     color: white;
+    box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
   }
   .btn.kofi:hover {
-    background: #e5504d;
-    border-color: #e5504d;
+    opacity: 0.85;
+    color: #f5f5f5 !important;
   }
+
+  .kofiimg {
+    display: initial !important;
+    vertical-align: middle;
+    width: 19px !important;
+    height: 15px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    border: none;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 5px !important;
+    animation: kofi-wiggle 3s infinite;
+  }
+
   .brand-icon {
     width: 28px;
     height: 28px;
@@ -418,5 +464,35 @@
     gap: 0.4rem;
     font-size: 0.75rem;
     flex-wrap: wrap;
+  }
+
+  @keyframes kofi-wiggle {
+    0% {
+      transform: rotate(0) scale(1);
+    }
+    60% {
+      transform: rotate(0) scale(1);
+    }
+    75% {
+      transform: rotate(0) scale(1.12);
+    }
+    80% {
+      transform: rotate(0) scale(1.1);
+    }
+    84% {
+      transform: rotate(-10deg) scale(1.1);
+    }
+    88% {
+      transform: rotate(10deg) scale(1.1);
+    }
+    92% {
+      transform: rotate(-10deg) scale(1.1);
+    }
+    96% {
+      transform: rotate(10deg) scale(1.1);
+    }
+    100% {
+      transform: rotate(0) scale(1);
+    }
   }
 </style>

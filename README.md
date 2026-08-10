@@ -65,16 +65,15 @@ The desktop app is built with [Tauri](https://tauri.app/) v2 (Rust shell) and
 
 ### Command-line arguments
 
-All CLI flags are applied once, at launch, after the GUI's initial config load — same as the
-old Electron launcher, minus its second-instance-forwarding behavior (running the app a second
-time opens a second window rather than forwarding flags to the first, since no single-instance
-lock is set up in the Tauri app).
+All CLI flags are applied once, at launch, after the GUI's initial config load. A single-instance
+lock is enforced, so running the app a second time just re-focuses the existing window instead of
+opening a new one — the second launch's flags are not forwarded to the first.
 
 | Flag | Effect |
 |---|---|
 | `--lang <code>` | Override the UI language for this launch only (e.g. `--lang cs`) — doesn't overwrite your saved language preference |
 | `--preset <name>` | Load a saved preset by name (case-insensitive) before applying any other flag below |
-| `--ws <url>` | Override the Mixing Station WebSocket URL for this launch (`ws://`/`wss://` prefix added automatically if omitted) |
+| `--ws <url>` | Override the Mixing Station WebSocket URL for this launch (`ws://` prefix added automatically if omitted) |
 | `--interval <ms>` | Override the metering interval for this launch (clamped to 30–1000ms) |
 | `--log` | Enable JSON WS/MIDI logging for this launch |
 | `--start` | Start the bridge automatically once the GUI has finished loading |
@@ -249,14 +248,20 @@ binary:
 
 - Need more visibility:
   - Set `logJson: true` in `bridge-config.json` (or toggle it in the GUI's Connection tab) to log
-    WS/MIDI JSON payloads. There's currently no separate metering-only debug log level (JS's old
-    `LOG_METERING` toggle hasn't been ported).
+    WS/MIDI JSON payloads. There's currently no separate metering-only debug log level — it's
+    covered by the same `logJson` toggle.
 
 - A topbar status dot (Mixing Station/Console 1 On-Screen Display) never turns green
   despite the app being present:
-  - The match string in [`src-tauri/src/status_gather.rs`](src-tauri/src/status_gather.rs) likely
-    doesn't match what your system actually reports. Check the exact process name via
-    `ps -Ao args= | grep -i <app name>`, and adjust the corresponding match string there.
+  - The match string is in `compute_status` in
+    [`crates/bridge-core/src/status_monitor.rs`](crates/bridge-core/src/status_monitor.rs) (not
+    `src-tauri/src/status_gather.rs`, which only collects the raw process names —
+    `status_monitor.rs` is what actually matches them) and likely doesn't match what your system
+    actually reports. Check the exact process command line, then adjust the corresponding match
+    string there:
+    - **macOS**: `ps -Ao args= | grep -i <app name>`.
+    - **Windows** (PowerShell): `Get-CimInstance Win32_Process | Where-Object CommandLine -like
+      "*<app name>*" | Select-Object CommandLine`.
 
 ## Support
 

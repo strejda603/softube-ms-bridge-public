@@ -444,6 +444,18 @@ pub fn run() {
     );
 
     tauri::Builder::default()
+        // Must be the first plugin registered: it needs to claim the single-instance lock
+        // before any window is created. On a second launch it runs in the *first* instance's
+        // process (the second process exits immediately), so this closure just re-focuses the
+        // existing window -- there's no use case for multiple windows against one Console 1
+        // Fader/Mixing Station pair.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(cli_args)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
