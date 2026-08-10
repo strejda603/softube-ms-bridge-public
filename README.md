@@ -110,6 +110,43 @@ Tauri writes platform-native bundles (`.app`/`.dmg` on macOS, `.exe`/`.msi` on W
 `src-tauri/target/release/bundle/`. See the [Tauri distribution docs](https://tauri.app/distribute/)
 for the exact artifact set on your platform.
 
+By default `npm run tauri build` only targets your machine's own architecture — on an Apple
+Silicon Mac that's an arm64-only bundle that won't run on an Intel Mac. To build a different Mac
+target yourself:
+
+- **Apple Silicon only** (arm64):
+
+  `rustup target add aarch64-apple-darwin`
+  `npm run tauri build -- --target aarch64-apple-darwin`
+
+- **Intel only** (x86_64):
+
+  `rustup target add x86_64-apple-darwin`
+  `npm run tauri build -- --target x86_64-apple-darwin`
+
+- **Universal** (arm64 + x86_64 in one `.app`/`.dmg`, runs on either Mac, larger download):
+
+  `rustup target add aarch64-apple-darwin x86_64-apple-darwin`
+  `npm run tauri build -- --target universal-apple-darwin`
+
+### Which release download do I need?
+
+The [`build.yml`](.github/workflows/build.yml) GitHub Actions release workflow builds all 3 Mac
+variants above, plus Windows. Tauri names each `.dmg` by architecture automatically, so the
+[releases page](https://github.com/strejda603/softube-ms-bridge-public/releases/latest) lists
+them distinguishably — pick by filename:
+
+| Filename contains | Platform |
+|---|---|
+| `_aarch64.dmg` | macOS, Apple Silicon (M1/M2/M3/M4 — most Macs sold since late 2020) |
+| `_x64.dmg` | macOS, Intel |
+| `_universal.dmg` | macOS, either — pick this if unsure, at the cost of a larger download |
+| `_x64-setup.exe` / `_x64_en-US.msi` | Windows installer |
+| `_x64-portable.exe` | Windows, no install/admin rights needed |
+
+Unsure which Mac you have: Apple menu → About This Mac — "Apple M-something" is Apple Silicon
+(`aarch64`), "Intel" is Intel (`x64`).
+
 ## Localization
 
 The GUI is translatable — English (`src/locales/en.json`) and Czech (`src/locales/cs.json`) ship
