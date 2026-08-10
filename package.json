@@ -1,6 +1,6 @@
 {
   "name": "softube-mixingstation-bridge",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Bridge between Softube Console 1 and Mixing Station API",
   "scripts": {
     "test": "npm run test:frontend && cargo test --workspace",
